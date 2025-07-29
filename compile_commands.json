@@ -1,0 +1,70 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-D_POSIX_C_SOURCE=200809L",
+      "-I./src",
+      "-c",
+      "-o",
+      "build/assembler.o",
+      "src/assembler.c"
+    ],
+    "directory": "/home/marko/repos/ss/assembler",
+    "file": "/home/marko/repos/ss/assembler/src/assembler.c",
+    "output": "/home/marko/repos/ss/assembler/build/assembler.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-D_POSIX_C_SOURCE=200809L",
+      "-I./src",
+      "-c",
+      "-o",
+      "build/assembler.tab.o",
+      "build/assembler.tab.c"
+    ],
+    "directory": "/home/marko/repos/ss/assembler",
+    "file": "/home/marko/repos/ss/assembler/build/assembler.tab.c",
+    "output": "/home/marko/repos/ss/assembler/build/assembler.tab.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-D_POSIX_C_SOURCE=200809L",
+      "-I./src",
+      "-c",
+      "-o",
+      "build/lex.yy.o",
+      "build/lex.yy.c"
+    ],
+    "directory": "/home/marko/repos/ss/assembler",
+    "file": "/home/marko/repos/ss/assembler/build/lex.yy.c",
+    "output": "/home/marko/repos/ss/assembler/build/lex.yy.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-D_POSIX_C_SOURCE=200809L",
+      "-I./src",
+      "-c",
+      "-o",
+      "build/linker.o",
+      "src/linker.c"
+    ],
+    "directory": "/home/marko/repos/ss/assembler",
+    "file": "/home/marko/repos/ss/assembler/src/linker.c",
+    "output": "/home/marko/repos/ss/assembler/build/linker.o"
+  }
+]
