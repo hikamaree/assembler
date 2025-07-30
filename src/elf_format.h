@@ -23,6 +23,7 @@ typedef struct {
     unsigned char *data;
     size_t capacity;
     size_t size;
+	size_t base;
 } Section;
 
 typedef enum {

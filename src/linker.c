@@ -353,7 +353,6 @@ bool load_input_files(const LinkerOptions *opts) {
     return true;
 }
 
-
 bool link_objects(LinkerOptions *opts) {
     uint32_t next_address = 0;
 
@@ -363,20 +362,18 @@ bool link_objects(LinkerOptions *opts) {
 
         for (int j = 0; j < opts->placement_count; j++) {
             if (strcmp(sec->name, opts->placements[j].section_name) == 0) {
-                sec->capacity = opts->placements[j].address;
+                sec->base = opts->placements[j].address;
                 found = true;
 
-                uint32_t end_address = opts->placements[j].address + sec->size;
-                if (end_address > next_address) {
+                uint32_t end_address = sec->base + sec->size;
+                if (end_address > next_address)
                     next_address = end_address;
-                }
-
                 break;
             }
         }
 
         if (!found) {
-            sec->capacity = next_address;
+            sec->base = next_address;
             next_address += sec->size;
         }
     }
@@ -395,108 +392,123 @@ bool link_objects(LinkerOptions *opts) {
             return false;
         }
 
-        sym->offset = sym->offset + sec->capacity;
+        sym->offset += sec->base;
     }
+
 
     for (size_t i = 0; i < relocation_count; i++) {
         Relocation *rel = &relocations[i];
 
-        if (!rel->section) {
-            fprintf(stderr, "Error: Relocation %zu has NULL section pointer\n", i);
+        if (!rel->section || !rel->symbol) {
+            fprintf(stderr, "Error: Relocation %zu has invalid section or symbol\n", i);
             return false;
         }
 
-        Section *target_sec = rel->section;
-
-        if (!target_sec->data) {
-            fprintf(stderr, "Error: Section %s has NULL data\n", target_sec->name);
+        Symbol *target = find_symbol(rel->symbol);
+        if (!target || !target->defined) {
+            fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
             return false;
         }
 
-        if (!rel->symbol) {
-            fprintf(stderr, "Error: Relocation %zu has NULL symbol name\n", i);
-            return false;
-        }
+        Section *sec = rel->section;
+        size_t offset = rel->offset;
 
-        Symbol *target_sym = find_symbol(rel->symbol);
-        if (!target_sym) {
-            fprintf(stderr, "Error: Relocation references unknown symbol %s\n", rel->symbol);
-            return false;
-        }
 
-        if (rel->offset + sizeof(uint32_t) > target_sec->size) {
-            fprintf(stderr, "Error: Relocation offset out of bounds in section %s (offset = 0x%X, size = 0x%X)\n",
-                    target_sec->name, (uint32_t)rel->offset, (uint32_t)target_sec->size);
-            return false;
-        }
+		printf("=== Section %s content (size = %zu) ===\n", sec->name, sec->size);
+		for (size_t b = 0; b < sec->size; b++) {
+			if (b % 16 == 0) printf("\n%04zx: ", b);
+			printf("%02X ", sec->data[b]);
+		}
+		printf("\n");
 
-        uint32_t *patch_location = (uint32_t *)(target_sec->data + rel->offset);
+		if (offset + 4 > sec->size) {
+			fprintf(stderr, "Error: Relocation offset out of bounds in section %s (offset %zu + 4 > %zu)\n",
+					sec->name, offset, sec->size);
+			return false;
+		}
 
-        if (rel->type == RELOC_ABS) {
-            *patch_location = target_sym->offset;
-        } else if (rel->type == RELOC_REL) {
-            uint32_t instr_addr = target_sec->capacity + rel->offset;
-            *patch_location = target_sym->offset - instr_addr;
-        } else {
-            fprintf(stderr, "Error: Unknown relocation type for symbol %s\n", rel->symbol);
-            return false;
-        }
-    }
+		uint32_t abs_value;
+		if (rel->type == RELOC_ABS) {
+			abs_value = target->offset;
+		} else {
+			fprintf(stderr, "Error: Unknown relocation type\n");
+			return false;
+		}
 
-    return true;
+		printf("patch: %X\n", abs_value);
+
+		uint32_t original = 0;
+
+		original |= ((uint32_t)sec->data[offset + 0]) << 24;
+		original |= ((uint32_t)sec->data[offset + 1]) << 16;
+		original |= ((uint32_t)sec->data[offset + 2]) << 8;
+		original |= ((uint32_t)sec->data[offset + 3]) << 0;
+
+		printf("original: %X\n", original);
+
+		uint32_t patched = original | abs_value;
+		printf("patched: %X\n", patched);
+
+		sec->data[offset + 0] = (patched >> 24) & 0xFF;
+		sec->data[offset + 1] = (patched >> 16) & 0xFF;
+		sec->data[offset + 2] = (patched >> 8) & 0xFF;
+		sec->data[offset + 3] = (patched >> 0) & 0xFF;
+	}
+
+	return true;
 }
 
 bool write_output(LinkerOptions *opts) {
-    FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
-        return false;
-    }
+	FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
+	if (!f) {
+		fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
+		return false;
+	}
 
-    if (opts->hex_output) {
-        for (size_t i = 0; i < section_count; i++) {
-            Section *sec = &sections[i];
-            uint32_t base_addr = (uint32_t)sec->capacity;
-            fprintf(f, "@%08X\n", base_addr);
-            for (size_t j = 0; j < sec->size; j++) {
-                fprintf(f, "%02X", sec->data[j]);
-                if ((j + 1) % 16 == 0 || (j + 1) == sec->size)
-                    fprintf(f, "\n");
-            }
-        }
-    } else if (opts->relocatable_output) {
-        for (size_t i = 0; i < section_count; i++) {
-            Section *sec = &sections[i];
-            fwrite(sec->data, 1, sec->size, f);
-        }
-    }
+	if (opts->hex_output) {
+		for (size_t i = 0; i < section_count; i++) {
+			Section *sec = &sections[i];
+			uint32_t base_addr = (uint32_t)sec->capacity;
+			fprintf(f, "@%08X\n", base_addr);
+			for (size_t j = 0; j < sec->size; j++) {
+				fprintf(f, "%02X", sec->data[j]);
+				if ((j + 1) % 16 == 0 || (j + 1) == sec->size)
+					fprintf(f, "\n");
+			}
+		}
+	} else if (opts->relocatable_output) {
+		for (size_t i = 0; i < section_count; i++) {
+			Section *sec = &sections[i];
+			fwrite(sec->data, 1, sec->size, f);
+		}
+	}
 
-    fclose(f);
-    return true;
+	fclose(f);
+	return true;
 }
 
 int main(int argc, char **argv) {
-    LinkerOptions opts;
-    if (!parse_args(argc, argv, &opts)) {
-        print_usage();
-        return 1;
-    }
+	LinkerOptions opts;
+	if (!parse_args(argc, argv, &opts)) {
+		print_usage();
+		return 1;
+	}
 
-    if (!load_input_files(&opts)) {
-        fprintf(stderr, "Failed to load input files\n");
-        return 2;
-    }
+	if (!load_input_files(&opts)) {
+		fprintf(stderr, "Failed to load input files\n");
+		return 2;
+	}
 
-    if (!link_objects(&opts)) {
-        fprintf(stderr, "Linking failed\n");
-        return 3;
-    }
+	if (!link_objects(&opts)) {
+		fprintf(stderr, "Linking failed\n");
+		return 3;
+	}
 
-    if (!write_output(&opts)) {
-        fprintf(stderr, "Writing output failed\n");
-        return 4;
-    }
+	if (!write_output(&opts)) {
+		fprintf(stderr, "Writing output failed\n");
+		return 4;
+	}
 
-    printf("Linking successful, output: %s\n", opts.output_filename);
-    return 0;
+	printf("Linking successful, output: %s\n", opts.output_filename);
+	return 0;
 }

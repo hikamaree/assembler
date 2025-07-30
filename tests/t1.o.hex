@@ -1,0 +1,44 @@
+=== Sections (1) ===
+.section text (size: 92 bytes):
+00 00 00 00 10 00 00 00 96 0E 00 08 93 FE 00 08 
+93 FE 00 04 30 00 00 00 81 E0 1F FC 93 2E 00 04 
+40 03 40 00 50 55 60 00 51 77 80 00 52 11 20 00 
+53 33 40 00 60 55 00 00 61 66 70 00 62 88 10 00 
+63 22 30 00 70 44 50 00 71 66 70 00 92 12 0F ED 
+82 00 10 00 90 20 00 00 94 10 30 00 
+
+=== Symbols (3) ===
+Symbol: label
+  Offset: 0xFFFFFFFFFFFFFFFC
+  Section: text
+  Defined: yes
+  Global: yes
+  External: no
+
+Symbol: labela1
+  Offset: 0xC
+  Section: text
+  Defined: yes
+  Global: no
+  External: no
+
+Symbol: majmunska_adresa
+  Offset: 0x18
+  Section: text
+  Defined: yes
+  Global: no
+  External: no
+
+=== Relocations (2) ===
+Relocation #0
+  Section: text
+  Offset: 0x14
+  Symbol: labela1
+  Type: 0
+
+Relocation #1
+  Section: text
+  Offset: 0x50
+  Symbol: majmunska_adresa
+  Type: 0
+

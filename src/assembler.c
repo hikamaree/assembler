@@ -64,7 +64,7 @@ size_t reloc_count = 0;
 static Symbol symbols[MAX_SYMBOLS];
 static size_t symbol_count = 0;
 
-Section sections[10];
+Section sections[64];
 int section_count = 0;
 
 Section *get_section(const char *name) {
@@ -77,6 +77,7 @@ Section *get_section(const char *name) {
     sec->capacity = 1024;
     sec->data = malloc(sec->capacity);
     sec->size = 0;
+    sec->base = 0;
     return sec;
 }
 
@@ -156,17 +157,28 @@ int parse_csr(const char *s) {
     return -1;
 }
 
-void add_relocation(Section *sec, size_t offset, size_t size, const char *symbol, RelocType type) {
+void add_relocation(Section *sec, size_t offset, const char *symbol, RelocType type) {
     if (reloc_count >= MAX_RELOCATIONS) {
         fprintf(stderr, "Previše relokacija!\n");
         exit(1);
     }
     relocations[reloc_count].section = sec;
     relocations[reloc_count].offset = offset;
-    relocations[reloc_count].size = size;
+    relocations[reloc_count].size = 4;
     relocations[reloc_count].symbol = strdup(symbol);
     relocations[reloc_count].type = type;
     reloc_count++;
+}
+
+void add_operand_relocation(const Operand* op) {
+    if (op->type == OPERAND_SYMBOL || (op->type == OPERAND_MEM && op->mem.offset_symbol)) {
+        Section* sec = get_section(state.current_section);
+
+        size_t reloc_offset = sec->size;
+
+        const char* sym = (op->type == OPERAND_SYMBOL) ? op->symbol : op->mem.offset_symbol;
+        add_relocation(sec, reloc_offset, sym, RELOC_ABS);
+    }
 }
 
 void assembler_handle_label(const char* label) {
@@ -180,7 +192,7 @@ void assembler_handle_label(const char* label) {
 	sym->section = strdup(state.current_section);
 
 	Section* sec = get_section(state.current_section);
-	sym->offset = sec->size;
+	sym->offset = sec->size - 4;
 }
 
 void assembler_handle_section(const char* section_name) {
@@ -196,9 +208,16 @@ void assembler_handle_word(const StringList* words) {
 			val = parse_literal(w);
 		} else {
 			val = 0;
-			add_relocation(sec, sec->size, 4, w, RELOC_ABS);
+			add_relocation(sec, sec->size, w, RELOC_ABS);
 		}
-		section_write_bytes(sec, &val, sizeof(val));
+
+		uint8_t be[4];
+		be[0] = (val >> 24) & 0xFF;
+		be[1] = (val >> 16) & 0xFF;
+		be[2] = (val >> 8) & 0xFF;
+		be[3] = val & 0xFF;
+
+		section_write_bytes(sec, be, 4);
 	}
 }
 
@@ -234,15 +253,6 @@ void assembler_handle_end(void) {
 void assembler_handle_ascii(const char* str) {
     Section *sec = get_section(state.current_section);
     section_write_bytes(sec, (const unsigned char*)str, strlen(str));
-}
-
-void add_operand_relocation(const Operand* op, size_t size) {
-    if (op->type == OPERAND_SYMBOL || (op->type == OPERAND_MEM && op->mem.offset_symbol)) {
-        Section* sec = get_section(state.current_section);
-        size_t reloc_offset = sec->size - size;
-        const char* sym = (op->type == OPERAND_SYMBOL) ? op->symbol : op->mem.offset_symbol;
-        add_relocation(sec, reloc_offset, size, sym, RELOC_ABS);
-    }
 }
 
 static void emit(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
@@ -304,7 +314,7 @@ void assembler_handle_call(const Operand* op) {
     switch (op->type) {
         case OPERAND_SYMBOL:
             disp = 0;
-            add_operand_relocation(op, 3);
+            add_operand_relocation(op);
             break;
         case OPERAND_ADDR:
             disp = op->literal;
@@ -331,7 +341,7 @@ void assembler_handle_jmp(const Operand* op) {
 
         if (op->mem.offset_symbol) {
             disp = 0;
-            add_operand_relocation(op, 3);
+            add_operand_relocation(op);
         } else {
             disp = op->mem.offset;
         }
@@ -340,7 +350,7 @@ void assembler_handle_jmp(const Operand* op) {
         regA = 0;
         mod = 0x0;
         disp = 0;
-        add_operand_relocation(op, 3);
+        add_operand_relocation(op);
     }
 
     emit_instruction(0x3, mod, regA, regB, regC, disp);
@@ -360,7 +370,7 @@ void assembler_handle_beq(const Operand* r1, const Operand* r2, const Operand* o
 
         if (op->mem.offset_symbol) {
             disp = 0;
-            add_operand_relocation(op, 3);
+            add_operand_relocation(op);
         } else {
             disp = op->mem.offset;
         }
@@ -369,7 +379,7 @@ void assembler_handle_beq(const Operand* r1, const Operand* r2, const Operand* o
         regA = r1->reg;
         mod = 0x1;
         disp = 0;
-        add_operand_relocation(op, 3);
+        add_operand_relocation(op);
     }
 
     emit_instruction(0x3, mod, regA, regB, regC, disp);
@@ -389,7 +399,7 @@ void assembler_handle_bne(const Operand* r1, const Operand* r2, const Operand* o
 
         if (op->mem.offset_symbol) {
             disp = 0;
-            add_operand_relocation(op, 3);
+            add_operand_relocation(op);
         } else {
             disp = op->mem.offset;
         }
@@ -398,7 +408,7 @@ void assembler_handle_bne(const Operand* r1, const Operand* r2, const Operand* o
         regA = r1->reg;
         mod = 0x2;
         disp = 0;
-        add_operand_relocation(op, 3);
+        add_operand_relocation(op);
     }
 
     emit_instruction(0x3, mod, regA, regB, regC, disp);
@@ -418,7 +428,7 @@ void assembler_handle_bgt(const Operand* r1, const Operand* r2, const Operand* o
 
         if (op->mem.offset_symbol) {
             disp = 0;
-            add_operand_relocation(op, 3);
+            add_operand_relocation(op);
         } else {
             disp = op->mem.offset;
         }
@@ -427,7 +437,7 @@ void assembler_handle_bgt(const Operand* r1, const Operand* r2, const Operand* o
         regA = r1->reg;
         mod = 0x3;
         disp = 0;
-        add_operand_relocation(op, 3);
+        add_operand_relocation(op);
     }
 
     emit_instruction(0x3, mod, regA, regB, regC, disp);
@@ -517,7 +527,7 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
             regB = src->mem.base_reg;
         	regC = src->mem.index_reg;
             disp = src->mem.offset_symbol ? 0 : src->mem.offset;
-            add_operand_relocation(src, 3);
+            add_operand_relocation(src);
             mod = 0x2;
 			break;
 
@@ -528,7 +538,7 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 
         case OPERAND_SYMBOL:
         case OPERAND_LITERAL:
-            add_operand_relocation(src, 3);
+            add_operand_relocation(src);
             mod = 0x1;
             break;
 
@@ -554,7 +564,7 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
             regA = dst->mem.base_reg;
             regB = dst->mem.index_reg;
             disp = dst->mem.offset_symbol ? 0 : dst->mem.offset;
-            add_operand_relocation(dst, 3);
+            add_operand_relocation(dst);
             mod = 0x2;
             break;
 
@@ -566,7 +576,7 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
         case OPERAND_SYMBOL:
         case OPERAND_LITERAL:
             disp = 0;
-            add_operand_relocation(dst, 3);
+            add_operand_relocation(dst);
             mod = 0x2;
             break;
 
@@ -649,6 +659,51 @@ void write_output_file(const char* filename) {
 	fclose(f);
 }
 
+void write_text_output_file(const char* filename) {
+	FILE *f = fopen(filename, "w");
+	if (!f) {
+		fprintf(stderr, "Error opening text output file '%s': %s\n", filename, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	fprintf(f, "=== Sections (%d) ===\n", section_count);
+	for (int i = 0; i < section_count; i++) {
+		Section *sec = &sections[i];
+		fprintf(f, ".section %s (size: %zu bytes):\n", sec->name, sec->size);
+		for (uint32_t j = 0; j < sec->size; j++) {
+			fprintf(f, "%02X ", sec->data[j]);
+			if ((j + 1) % 16 == 0) fprintf(f, "\n");
+		}
+		if (sec->size % 16 != 0) fprintf(f, "\n");
+		fprintf(f, "\n");
+	}
+
+	fprintf(f, "=== Symbols (%zu) ===\n", symbol_count);
+	for (size_t i = 0; i < symbol_count; i++) {
+		Symbol *sym = &symbols[i];
+		fprintf(f, "Symbol: %s\n", sym->name);
+		fprintf(f, "  Offset: 0x%zX\n", sym->offset);
+		fprintf(f, "  Section: %s\n", sym->section ? sym->section : "(none)");
+		fprintf(f, "  Defined: %s\n", sym->defined ? "yes" : "no");
+		fprintf(f, "  Global: %s\n", sym->global ? "yes" : "no");
+		fprintf(f, "  External: %s\n", sym->external ? "yes" : "no");
+		fprintf(f, "\n");
+	}
+
+	fprintf(f, "=== Relocations (%zu) ===\n", reloc_count);
+	for (size_t i = 0; i < reloc_count; i++) {
+		Relocation *rel = &relocations[i];
+		fprintf(f, "Relocation #%zu\n", i);
+		fprintf(f, "  Section: %s\n", rel->section->name);
+		fprintf(f, "  Offset: 0x%zX\n", rel->offset);
+		fprintf(f, "  Symbol: %s\n", rel->symbol);
+		fprintf(f, "  Type: %d\n", rel->type);
+		fprintf(f, "\n");
+	}
+
+	fclose(f);
+}
+
 int main(int argc, char *argv[]) {
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s [-o output_file] <input_file>\n", argv[0]);
@@ -693,6 +748,10 @@ int main(int argc, char *argv[]) {
 
 	if (output_filename) {
 		write_output_file(output_filename);
+
+		char hex_filename[64];
+		snprintf(hex_filename, sizeof(hex_filename), "%s.hex", output_filename);
+		write_text_output_file(hex_filename);
 	} else {
 		printf("No output file specified, output omitted\n");
 	}
