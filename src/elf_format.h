@@ -16,6 +16,7 @@ typedef struct {
     bool defined;
     bool global;
     bool external;
+	bool relocatable;
 } Symbol;
 
 typedef struct {
@@ -28,7 +29,7 @@ typedef struct {
 
 typedef enum {
     RELOC_ABS,
-    RELOC_REL
+    RELOC_PC_REL
 } RelocType;
 
 typedef struct {

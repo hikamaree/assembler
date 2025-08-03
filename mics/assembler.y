@@ -17,6 +17,7 @@ extern void assembler_handle_word(const StringList* words);
 extern void assembler_handle_skip(int size);
 extern void assembler_handle_global(const StringList* symbols);
 extern void assembler_handle_extern(const StringList* symbols);
+extern void assembler_handle_equ(const char* symbol, const Expression* expression);
 extern void assembler_handle_end();
 extern void assembler_handle_ascii(const char* str);
 
@@ -54,10 +55,13 @@ void yyerror(const char *s);
 int yylex(void);
 %}
 
+%expect 34
+
 %union {
     int ival;
     char* str;
     struct Operand* operand_ptr;
+    struct Expression* expression_ptr;
 	StringList* str_list;
 }
 
@@ -68,15 +72,16 @@ int yylex(void);
 %token LD ST CSRWR CSRRD
 
 
-%token SECTION WORD SKIP GLOBAL EXTERN END ASCII
+%token SECTION WORD SKIP GLOBAL EXTERN EQU END ASCII
 
 %token<str> REGISTER CSR IDENTIFIER
-%token<ival> NUMBER DATANUM
+%token<ival> NUMBER
 %token<str> LITERAL
 %token<str> LABEL STRING
-%token COMMA LBRACKET RBRACKET PLUS
+%token COMMA LBRACKET RBRACKET PLUS MINUS DOLLAR
 
 %type<operand_ptr> operand
+%type<expression_ptr> expression
 
 %type <str_list> symbols words
 %type <void> instruction line label_definition directive program lines
@@ -206,25 +211,25 @@ operand:
         $$->csr = parse_csr($1);
         free($1);
       }
-    | NUMBER {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_NUMBER;
-        $$->literal = $1;
-      }
-    | DATANUM {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_ADDR;
-        $$->literal = $1;
-      }
-    | LITERAL {
+    | DOLLAR NUMBER {
         $$ = malloc(sizeof(Operand));
         $$->type = OPERAND_LITERAL;
+        $$->literal = $2;
+      }
+    | NUMBER {
+        $$ = malloc(sizeof(Operand));
+        $$->type = OPERAND_ADDR_LITERAL;
+        $$->literal = $1;
+      }
+    | DOLLAR IDENTIFIER {
+        $$ = malloc(sizeof(Operand));
+        $$->type = OPERAND_SYMBOL;
         $$->literal = 0;
-        $$->symbol = $1;
+        $$->symbol = $2;
       }
     | IDENTIFIER {
         $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_SYMBOL;
+        $$->type = OPERAND_ADDR_SYMBOL;
         $$->literal = 0;
         $$->symbol = $1;
       }
@@ -237,7 +242,7 @@ operand:
     	$$->mem.offset_symbol = NULL;
 		free($2);
       }
-    | LBRACKET REGISTER PLUS DATANUM RBRACKET {
+    | LBRACKET REGISTER PLUS NUMBER RBRACKET {
 		$$ = malloc(sizeof(Operand));
 		$$->type = OPERAND_MEM;
 		$$->mem.base_reg = parse_register($2);
@@ -265,7 +270,7 @@ operand:
     	free($2);
     	free($4);
 	}
-	| LBRACKET REGISTER PLUS REGISTER PLUS DATANUM RBRACKET {
+	| LBRACKET REGISTER PLUS REGISTER PLUS NUMBER RBRACKET {
     	$$ = malloc(sizeof(Operand));
     	$$->type = OPERAND_MEM;
     	$$->mem.base_reg = parse_register($2);
@@ -287,12 +292,92 @@ operand:
 	}
 ;
 
+expression:
+	NUMBER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = NONE;
+		$$->op1.literal = $1;
+		$$->op1.type = OPERAND_LITERAL;
+	}
+	| IDENTIFIER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = NONE;
+		$$->op1.symbol = $1;
+		$$->op1.type = OPERAND_SYMBOL;
+	}
+	| NUMBER PLUS NUMBER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = ADDITION;
+		$$->op1.literal = $1;
+		$$->op1.type = OPERAND_LITERAL;
+		$$->op2.literal = $3;
+		$$->op2.type = OPERAND_LITERAL;
+	}
+	| NUMBER PLUS IDENTIFIER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = ADDITION;
+		$$->op1.literal = $1;
+		$$->op1.type = OPERAND_LITERAL;
+		$$->op2.symbol = $3;
+		$$->op2.type = OPERAND_SYMBOL;
+	}
+	| IDENTIFIER PLUS NUMBER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = ADDITION;
+		$$->op1.symbol = $1;
+		$$->op1.type = OPERAND_SYMBOL;
+		$$->op2.literal = $3;
+		$$->op2.type = OPERAND_LITERAL;
+	}
+	| IDENTIFIER PLUS IDENTIFIER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = ADDITION;
+		$$->op1.symbol = $1;
+		$$->op1.type = OPERAND_SYMBOL;
+		$$->op2.symbol = $3;
+		$$->op2.type = OPERAND_SYMBOL;
+	}
+	| NUMBER MINUS NUMBER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = SUBSTRACTION;
+		$$->op1.literal = $1;
+		$$->op1.type = OPERAND_LITERAL;
+		$$->op2.literal = $3;
+		$$->op2.type = OPERAND_LITERAL;
+	}
+	| NUMBER MINUS IDENTIFIER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = SUBSTRACTION;
+		$$->op1.literal = $1;
+		$$->op1.type = OPERAND_LITERAL;
+		$$->op2.symbol = $3;
+		$$->op2.type = OPERAND_SYMBOL;
+	}
+	| IDENTIFIER MINUS NUMBER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = SUBSTRACTION;
+		$$->op1.symbol = $1;
+		$$->op1.type = OPERAND_SYMBOL;
+		$$->op2.literal = $3;
+		$$->op2.type = OPERAND_LITERAL;
+	}
+	| IDENTIFIER MINUS IDENTIFIER {
+		$$ = malloc(sizeof(Expression));
+		$$->operation = SUBSTRACTION;
+		$$->op1.symbol = $1;
+		$$->op1.type = OPERAND_SYMBOL;
+		$$->op2.symbol = $3;
+		$$->op2.type = OPERAND_SYMBOL;
+	}
+;
+
 directive:
     SECTION IDENTIFIER { assembler_handle_section($2); free($2); }
     | WORD words { assembler_handle_word($2); free_string_list($2); }
-    | SKIP DATANUM { assembler_handle_skip($2); }
+    | SKIP NUMBER { assembler_handle_skip($2); }
     | GLOBAL symbols { assembler_handle_global($2); free_string_list($2); }
     | EXTERN symbols { assembler_handle_extern($2); free_string_list($2); }
+    | EQU IDENTIFIER COMMA expression { assembler_handle_equ($2, $4); }
     | END { assembler_handle_end(); }
   	| ASCII STRING { assembler_handle_ascii($2); }
 ;
@@ -303,13 +388,13 @@ symbols:
 ;
 
 words:
-    DATANUM {
+    NUMBER {
         $$ = create_string_list();
         char buf[32];
         snprintf(buf, sizeof(buf), "%d", $1);
         string_list_push_back($$, buf);
     }
-    | words COMMA DATANUM {
+    | words COMMA NUMBER {
         char buf[32];
         snprintf(buf, sizeof(buf), "%d", $3);
         string_list_push_back($1, buf);
@@ -322,4 +407,3 @@ words:
 void yyerror(const char *s) {
     fprintf(stderr, "Parser error: %s at line %d near token '%s'\n", s, yylineno, g_current_yytext ? g_current_yytext : "(unknown)");
 }
-

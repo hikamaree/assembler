@@ -1,5 +1,5 @@
 CXX := gcc
-CXXFLAGS := -std=c11 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -I./src
+CXXFLAGS := -std=c11 -Wall -Wextra -Wno-unused-function -D_POSIX_C_SOURCE=200809L -I./src
 BUILD_DIR := build
 SRC_DIR := src
 MICS_DIR := mics

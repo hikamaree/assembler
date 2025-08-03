@@ -21,7 +21,9 @@
 "["             			{ return LBRACKET; }
 "]"             			{ return RBRACKET; }
 "+"             			{ return PLUS; }
+"-"             			{ return MINUS; }
 ","                         { return COMMA; }
+"$"                         { return DOLLAR; }
 
 "halt"                      { return HALT; }
 "int"                       { return INT; }
@@ -55,6 +57,7 @@
 ".skip"                     { return SKIP; }
 ".global"                   { return GLOBAL; }
 ".extern"                   { return EXTERN; }
+".equ"                   	{ return EQU; }
 ".end"                      { return END; }
 ".ascii"                    { return ASCII; }
 
@@ -70,22 +73,16 @@
     return CSR;
 }
 
-$0[xX][0-9a-fA-F]+ {
+0[xX][0-9a-fA-F]+ {
 	g_current_yytext = yytext;
-    yylval.ival = (int)strtol(yytext + 1, NULL, 0);
+    yylval.ival = (int)strtol(yytext, NULL, 0);
     return NUMBER;
 }
 
-$[0-9]+ {
+[0-9]+ {
 	g_current_yytext = yytext;
-    yylval.ival = atoi(yytext + 1);
+    yylval.ival = atoi(yytext);
     return NUMBER;
-}
-
-$[a-zA-Z_][a-zA-Z0-9_]* {
-	g_current_yytext = yytext;
-	yylval.str = strdup(yytext + 1);
-    return IDENTIFIER;
 }
 
 [a-zA-Z_][a-zA-Z0-9_]*: {
@@ -99,18 +96,6 @@ $[a-zA-Z_][a-zA-Z0-9_]* {
 	g_current_yytext = yytext;
 	yylval.str = strdup(yytext);
 	return IDENTIFIER;
-}
-
-0[xX][0-9a-fA-F]+ {
-	g_current_yytext = yytext;
-    yylval.ival = (int)strtol(yytext, NULL, 0);
-    return DATANUM;
-}
-
-[0-9]+ {
-	g_current_yytext = yytext;
-    yylval.ival = atoi(yytext);
-    return DATANUM;
 }
 
 \"([^\"\n]*)\" { 

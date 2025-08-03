@@ -46,6 +46,7 @@ void print_usage() {
 }
 
 Section* find_section(const char *name) {
+    if (!name) return NULL;
     for (size_t i = 0; i < section_count; i++) {
         if (strcmp(sections[i].name, name) == 0)
             return &sections[i];
@@ -252,7 +253,8 @@ bool load_object_file(const char *filename) {
 
         if (fread(&sym->defined, sizeof(bool), 1, f) != 1 ||
             fread(&sym->global, sizeof(bool), 1, f) != 1 ||
-            fread(&sym->external, sizeof(bool), 1, f) != 1) {
+            fread(&sym->external, sizeof(bool), 1, f) != 1 ||
+			fread(&sym->relocatable, sizeof(bool), 1, f) != 1) {
             fprintf(stderr, "Error: Failed to read symbol flags\n");
             fclose(f);
             return false;
@@ -392,27 +394,27 @@ bool link_objects(LinkerOptions *opts) {
             return false;
         }
 
-        sym->offset += sec->base;
+		if(sym->relocatable) {
+        	sym->offset += sec->base;
+		}
     }
 
+	for (size_t i = 0; i < relocation_count; i++) {
+		Relocation *rel = &relocations[i];
 
-    for (size_t i = 0; i < relocation_count; i++) {
-        Relocation *rel = &relocations[i];
+		if (!rel->section || !rel->symbol) {
+			fprintf(stderr, "Error: Relocation %zu has invalid section or symbol\n", i);
+			return false;
+		}
 
-        if (!rel->section || !rel->symbol) {
-            fprintf(stderr, "Error: Relocation %zu has invalid section or symbol\n", i);
-            return false;
-        }
+		Symbol *target = find_symbol(rel->symbol);
+		if (!target || !target->defined) {
+			fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
+			return false;
+		}
 
-        Symbol *target = find_symbol(rel->symbol);
-        if (!target || !target->defined) {
-            fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
-            return false;
-        }
-
-        Section *sec = rel->section;
-        size_t offset = rel->offset;
-
+		Section *sec = rel->section;
+		size_t offset = rel->offset;
 
 		printf("=== Section %s content (size = %zu) ===\n", sec->name, sec->size);
 		for (size_t b = 0; b < sec->size; b++) {
@@ -427,64 +429,98 @@ bool link_objects(LinkerOptions *opts) {
 			return false;
 		}
 
-		uint32_t abs_value;
 		if (rel->type == RELOC_ABS) {
-			abs_value = target->offset;
+			uint32_t abs_addr = target->offset;
+			printf("RELOC_ABS: patching absolute address 0x%08X at offset 0x%zX\n", abs_addr, offset);
+			sec->data[offset + 0] = sec->data[offset + 0] | ((abs_addr >> 24) & 0xFF);
+			sec->data[offset + 1] = sec->data[offset + 1] | ((abs_addr >> 16) & 0xFF);
+			sec->data[offset + 2] = sec->data[offset + 2] | ((abs_addr >> 8) & 0xFF);
+			sec->data[offset + 3] = sec->data[offset + 3] | ((abs_addr >> 0) & 0xFF);
+		} else if (rel->type == RELOC_PC_REL) {
+			size_t instr_start = (offset >= 2) ? offset - 2 : 0;
+			uint32_t pc = sec->base + instr_start + 4;
+			int32_t relative = (int32_t)target->offset - (int32_t)pc;
+
+			if (relative > 0xFFF) {
+				fprintf(stderr, "Error: PC-relative relocation out of range for symbol %s (rel = %d)\n",
+						rel->symbol, relative);
+				return false;
+			}
+
+			uint32_t encoded12 = (uint32_t)(relative & 0xFFF);
+
+			uint32_t orig = 0;
+			orig |= ((uint32_t)sec->data[instr_start + 0]) << 24;
+			orig |= ((uint32_t)sec->data[instr_start + 1]) << 16;
+			orig |= ((uint32_t)sec->data[instr_start + 2]) << 8;
+			orig |= ((uint32_t)sec->data[instr_start + 3]) << 0;
+
+			uint32_t patched = orig | encoded12;
+
+			sec->data[instr_start + 0] = (patched >> 24) & 0xFF;
+			sec->data[instr_start + 1] = (patched >> 16) & 0xFF;
+			sec->data[instr_start + 2] = (patched >> 8) & 0xFF;
+			sec->data[instr_start + 3] = (patched >> 0) & 0xFF;
+
+			printf("RELOC_PC_REL: target=0x%08zX pc=0x%08X rel=%d encoded=0x%03X\n",
+					target->offset, pc, relative, encoded12);
 		} else {
 			fprintf(stderr, "Error: Unknown relocation type\n");
 			return false;
 		}
-
-		printf("patch: %X\n", abs_value);
-
-		uint32_t original = 0;
-
-		original |= ((uint32_t)sec->data[offset + 0]) << 24;
-		original |= ((uint32_t)sec->data[offset + 1]) << 16;
-		original |= ((uint32_t)sec->data[offset + 2]) << 8;
-		original |= ((uint32_t)sec->data[offset + 3]) << 0;
-
-		printf("original: %X\n", original);
-
-		uint32_t patched = original | abs_value;
-		printf("patched: %X\n", patched);
-
-		sec->data[offset + 0] = (patched >> 24) & 0xFF;
-		sec->data[offset + 1] = (patched >> 16) & 0xFF;
-		sec->data[offset + 2] = (patched >> 8) & 0xFF;
-		sec->data[offset + 3] = (patched >> 0) & 0xFF;
 	}
 
 	return true;
 }
 
 bool write_output(LinkerOptions *opts) {
-	FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
-	if (!f) {
-		fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
-		return false;
-	}
+    FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
+    if (!f) {
+        fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
+        return false;
+    }
 
-	if (opts->hex_output) {
-		for (size_t i = 0; i < section_count; i++) {
-			Section *sec = &sections[i];
-			uint32_t base_addr = (uint32_t)sec->capacity;
-			fprintf(f, "@%08X\n", base_addr);
-			for (size_t j = 0; j < sec->size; j++) {
-				fprintf(f, "%02X", sec->data[j]);
-				if ((j + 1) % 16 == 0 || (j + 1) == sec->size)
-					fprintf(f, "\n");
-			}
-		}
-	} else if (opts->relocatable_output) {
-		for (size_t i = 0; i < section_count; i++) {
-			Section *sec = &sections[i];
-			fwrite(sec->data, 1, sec->size, f);
-		}
-	}
+    if (opts->hex_output) {
+        Section* sorted[MAX_SECTIONS];
+        size_t sorted_count = section_count;
+        for (size_t i = 0; i < section_count; i++) {
+            sorted[i] = &sections[i];
+        }
+        for (size_t i = 1; i < sorted_count; i++) {
+            Section* key = sorted[i];
+            size_t j = i;
+            while (j > 0 && sorted[j - 1]->base > key->base) {
+                sorted[j] = sorted[j - 1];
+                j--;
+            }
+            sorted[j] = key;
+        }
 
-	fclose(f);
-	return true;
+        for (size_t si = 0; si < sorted_count; si++) {
+            Section *sec = sorted[si];
+            uint32_t base_addr = (uint32_t)sec->base;
+            for (size_t j = 0; j < sec->size; j += 8) {
+                fprintf(f, "%08X: ", base_addr + (uint32_t)j);
+                size_t line_end = j + 8;
+                if (line_end > sec->size)
+                    line_end = sec->size;
+                for (size_t k = j; k < line_end; k++) {
+                    fprintf(f, "%02X", (unsigned char)sec->data[k]);
+                    if (k + 1 < line_end)
+                        fputc(' ', f);
+                }
+                fprintf(f, "\n");
+            }
+        }
+    } else if (opts->relocatable_output) {
+        for (size_t i = 0; i < section_count; i++) {
+            Section *sec = &sections[i];
+            fwrite(sec->data, 1, sec->size, f);
+        }
+    }
+
+    fclose(f);
+    return true;
 }
 
 int main(int argc, char **argv) {

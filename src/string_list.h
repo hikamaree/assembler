@@ -11,11 +11,11 @@ typedef struct Operand {
     enum {
 		OPERAND_REG,
 		OPERAND_CSR,
-		OPERAND_NUMBER,
 		OPERAND_LITERAL,
 		OPERAND_SYMBOL,
 		OPERAND_MEM,
-		OPERAND_ADDR
+		OPERAND_ADDR_SYMBOL,
+		OPERAND_ADDR_LITERAL
 	} type;
     union {
         int reg;
@@ -30,6 +30,16 @@ typedef struct Operand {
         } mem;
     };
 } Operand;
+
+typedef struct Expression {
+	enum {
+		NONE,
+		ADDITION,
+		SUBSTRACTION
+	} operation;
+	Operand op1;
+	Operand op2;
+} Expression;
 
 typedef struct {
     char** data;
