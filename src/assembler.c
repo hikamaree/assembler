@@ -85,10 +85,13 @@ Section *get_section(const char *name) {
     }
     Section *sec = &sections[section_count++];
     strncpy(sec->name, name, sizeof(sec->name)-1);
-    sec->capacity = 1024;
+    sec->capacity = 0xFFF;
     sec->data = malloc(sec->capacity);
     sec->size = 0;
     sec->base = 0;
+	sec->dpool_capacity=0xFFF;
+	sec->dpool_data = malloc(sec->dpool_capacity);
+	sec->dpool_size = 0;
     return sec;
 }
 
@@ -142,6 +145,7 @@ Symbol* add_symbol(const char* name) {
     sym->global = false;
     sym->external = false;
 	sym->relocatable = false;
+	sym->dpool = false;
     return sym;
 }
 
@@ -251,6 +255,21 @@ void add_relocation(Section *sec, size_t offset, const char *symbol, RelocType t
     relocations[reloc_count].size = 4;
     relocations[reloc_count].symbol = strdup(symbol);
     relocations[reloc_count].type = type;
+    relocations[reloc_count].dpool = false;
+    reloc_count++;
+}
+
+void add_dpool_relocation(Section *sec, size_t offset, const char *symbol, RelocType type) {
+    if (reloc_count >= MAX_RELOCATIONS) {
+        fprintf(stderr, "Previše relokacija!\n");
+        exit(1);
+    }
+    relocations[reloc_count].section = sec;
+    relocations[reloc_count].offset = offset;
+    relocations[reloc_count].size = 4;
+    relocations[reloc_count].symbol = strdup(symbol);
+    relocations[reloc_count].type = type;
+    relocations[reloc_count].dpool = true;
     reloc_count++;
 }
 
@@ -267,10 +286,6 @@ void add_operand_relocation(const Operand* op) {
 
 uint32_t append_disp_value(const Operand* op) {
     char key[64];
-    char dpool_section_name[70];
-    snprintf(dpool_section_name, sizeof(dpool_section_name), "%s_dpool", state.current_section);
-    Section* dpool = get_section(dpool_section_name);
-
     if (op->type == OPERAND_SYMBOL || op->type == OPERAND_ADDR_SYMBOL) {
         snprintf(key, sizeof(key), "SYM_%s", op->symbol);
     } else if (op->type == OPERAND_LITERAL || op->type == OPERAND_ADDR_LITERAL) {
@@ -280,18 +295,26 @@ uint32_t append_disp_value(const Operand* op) {
         exit(1);
     }
 
+    Section* sec = get_section(state.current_section);
+
+    if (!sec->dpool_data) {
+        sec->dpool_data = NULL;
+        sec->dpool_capacity = 0;
+        sec->dpool_size = 0;
+    }
+
     Symbol* sym = find_symbol(key);
     if (sym && sym->defined) {
         return sym->offset;
     }
 
-    uint32_t offset = dpool->size;
+    uint32_t offset = (uint32_t)sec->dpool_size;
 
     uint32_t val = 0;
     if (op->type == OPERAND_SYMBOL || op->type == OPERAND_ADDR_SYMBOL) {
         val = 0;
     } else {
-        val = op->literal;
+        val = (uint32_t)op->literal;
     }
 
     uint8_t be[4] = {
@@ -300,17 +323,22 @@ uint32_t append_disp_value(const Operand* op) {
         (val >> 8) & 0xFF,
         val & 0xFF
     };
-    section_write_bytes(dpool, be, 4);
+
+    memcpy(sec->dpool_data + sec->dpool_size, be, 4);
+    sec->dpool_size += 4;
 
     if (!sym) {
         sym = add_symbol(key);
     }
     sym->defined = true;
-    sym->section = strdup(dpool_section_name);
+    free(sym->section);
+    sym->section = strdup(sec->name);
     sym->offset = offset;
+    sym->relocatable = false;
+	sym->dpool = true;
 
     if (op->type == OPERAND_SYMBOL || op->type == OPERAND_ADDR_SYMBOL) {
-        add_relocation(dpool, offset, op->symbol, RELOC_ABS);
+        add_dpool_relocation(sec, offset, op->symbol, RELOC_ABS);
     }
 
     return offset;
@@ -322,7 +350,6 @@ void assembler_handle_label(const char* label) {
 		fprintf(stderr, "Error: symbol '%s' is already defined!\n", label);
 		exit(EXIT_FAILURE);
 	}
-	printf("label %s\n", sym->name);
 
 	sym->defined = true;
 	sym->relocatable = true;
@@ -381,7 +408,6 @@ void assembler_handle_global(const StringList* symbols) {
 	for (int i = 0; i < symbols->size; i++) {
 		Symbol* sym = add_symbol(symbols->data[i]);
 		sym->global = true;
-		printf("global %s\n", sym->name);
 	}
 }
 
@@ -514,12 +540,11 @@ void assembler_handle_call(const Operand* op) {
                 regB = 0;
                 disp = (int16_t)op->literal;
             } else {
-                uint32_t pool_offset = append_disp_value(op);
+                append_disp_value(op);
 
                 mod = 0x1;
                 regA = 15;
                 regB = 0;
-                disp = pool_offset;
 
                 size_t instr_start = sec->size;
                 size_t reloc_offset = instr_start + 2;
@@ -590,11 +615,10 @@ void assembler_handle_jmp(const Operand* op) {
                 regA = 0;
                 disp = (int16_t)op->literal;
             } else {
-                uint32_t pool_offset = append_disp_value(op);
+                append_disp_value(op);
 
                 mod = 0x8;
                 regA = 15;
-                disp = pool_offset;
 
                 size_t instr_start = sec->size;
                 size_t reloc_offset = instr_start + 2;
@@ -989,65 +1013,131 @@ void assembler_handle_csrwr(const Operand* r, const Operand* csr) {
     emit_instruction(0x9, 0x4, csr->csr, 0, r->reg, 0);
 }
 
-void write_output_file(const char* filename) {
-	FILE *f = fopen(filename, "wb");
-	if (!f) {
-		fprintf(stderr, "Error opening output file '%s': %s\n", filename, strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+void flatten_all_dpools(void) {
+    for (int i = 0; i < section_count; i++) {
+        Section *sec = &sections[i];
+        if (sec->dpool_size == 0) continue;
 
-	fwrite(&section_count, sizeof(section_count), 1, f);
+        size_t old_size = sec->size;
+        size_t dpool_size = sec->dpool_size;
+        size_t new_size = old_size + dpool_size;
 
-	for (int i = 0; i < section_count; i++) {
-		Section *sec = &sections[i];
-		fwrite(sec->name, sizeof(sec->name), 1, f);
-		fwrite(&sec->size, sizeof(sec->size), 1, f);
-		fwrite(sec->data, 1, sec->size, f);
-	}
+        if (new_size > sec->capacity) {
+            unsigned char *new_data = realloc(sec->data, new_size);
+            if (!new_data) {
+                fprintf(stderr, "OOM while flattening dpool for section %s\n", sec->name);
+                exit(1);
+            }
+            sec->data = new_data;
+            sec->capacity = new_size;
+        }
 
-	fwrite(&symbol_count, sizeof(symbol_count), 1, f);
-	for (size_t i = 0; i < symbol_count; i++) {
-		Symbol *sym = &symbols[i];
-		uint32_t name_len = (uint32_t)strlen(sym->name);
-		fwrite(&name_len, sizeof(name_len), 1, f);
-		fwrite(sym->name, 1, name_len, f);
+        memcpy(sec->data + old_size, sec->dpool_data, dpool_size);
+        sec->size = new_size;
 
-		fwrite(&sym->offset, sizeof(sym->offset), 1, f);
+        for (size_t si = 0; si < symbol_count; si++) {
+            Symbol *s = &symbols[si];
+            if (s->dpool && s->section && strcmp(s->section, sec->name) == 0) {
+                s->offset += old_size - 4;
+                s->dpool = false;
+            }
+        }
 
-		if (sym->section) {
-			uint32_t section_len = (uint32_t)strlen(sym->section);
-			fwrite(&section_len, sizeof(section_len), 1, f);
-			fwrite(sym->section, 1, section_len, f);
-		} else {
-			uint32_t section_len = 0;
-			fwrite(&section_len, sizeof(section_len), 1, f);
-		}
+        extern Relocation relocations[];
+        extern size_t reloc_count;
+        for (size_t ri = 0; ri < reloc_count; ri++) {
+            Relocation *r = &relocations[ri];
+            if (r->dpool && r->section == sec) {
+                r->offset += old_size;
+                r->dpool = false;
+            }
+        }
 
-		fwrite(&sym->defined, sizeof(sym->defined), 1, f);
-		fwrite(&sym->global, sizeof(sym->global), 1, f);
-		fwrite(&sym->external, sizeof(sym->external), 1, f);
-		fwrite(&sym->relocatable, sizeof(sym->relocatable), 1, f);
-	}
-
-	fwrite(&reloc_count, sizeof(reloc_count), 1, f);
-	for (size_t i = 0; i < reloc_count; i++) {
-		Relocation *rel = &relocations[i];
-
-		uint32_t sec_len = (uint32_t)strlen(rel->section->name);
-		fwrite(&sec_len, sizeof(sec_len), 1, f);
-		fwrite(rel->section->name, 1, sec_len, f);
-
-		fwrite(&rel->offset, sizeof(rel->offset), 1, f);
-
-		uint32_t sym_len = (uint32_t)strlen(rel->symbol);
-		fwrite(&sym_len, sizeof(sym_len), 1, f);
-		fwrite(rel->symbol, 1, sym_len, f);
-
-		fwrite(&rel->type, sizeof(rel->type), 1, f);
-	}
-
-	fclose(f);
+        free(sec->dpool_data);
+        sec->dpool_data = NULL;
+        sec->dpool_size = 0;
+        sec->dpool_capacity = 0;
+    }
 }
+
+
+static void write_exact(FILE *f, const void *buf, size_t sz) {
+    if (fwrite(buf, 1, sz, f) != sz) {
+        fprintf(stderr, "I/O write error: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
+void write_output_file(const char* filename) {
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        fprintf(stderr, "Error opening output file '%s': %s\n", filename, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    uint32_t sc = (uint32_t)section_count;
+    write_exact(f, &sc, sizeof(sc));
+    for (uint32_t i = 0; i < sc; i++) {
+        Section *sec = &sections[i];
+        write_exact(f, sec->name, 64);
+        uint64_t sz = (uint64_t)sec->size;
+        write_exact(f, &sz, sizeof(sz));
+        write_exact(f, sec->data, sec->size);
+    }
+
+    uint32_t symc = (uint32_t)symbol_count;
+    write_exact(f, &symc, sizeof(symc));
+    for (uint32_t i = 0; i < symc; i++) {
+        Symbol *sym = &symbols[i];
+        uint32_t name_len = (uint32_t)strlen(sym->name);
+        write_exact(f, &name_len, sizeof(name_len));
+        write_exact(f, sym->name, name_len);
+
+        uint64_t offset = (uint64_t)sym->offset;
+        write_exact(f, &offset, sizeof(offset));
+
+        if (sym->section) {
+            uint32_t section_len = (uint32_t)strlen(sym->section);
+            write_exact(f, &section_len, sizeof(section_len));
+            write_exact(f, sym->section, section_len);
+        } else {
+            uint32_t section_len = 0;
+            write_exact(f, &section_len, sizeof(section_len));
+        }
+
+        uint8_t defined = sym->defined ? 1 : 0;
+        uint8_t global = sym->global ? 1 : 0;
+        uint8_t external = sym->external ? 1 : 0;
+        uint8_t relocatable = sym->relocatable ? 1 : 0;
+        write_exact(f, &defined, sizeof(defined));
+        write_exact(f, &global, sizeof(global));
+        write_exact(f, &external, sizeof(external));
+        write_exact(f, &relocatable, sizeof(relocatable));
+    }
+
+    uint32_t rc = (uint32_t)reloc_count;
+    write_exact(f, &rc, sizeof(rc));
+    for (uint32_t i = 0; i < rc; i++) {
+        Relocation *rel = &relocations[i];
+
+        uint32_t sec_len = (uint32_t)strlen(rel->section->name);
+        write_exact(f, &sec_len, sizeof(sec_len));
+        write_exact(f, rel->section->name, sec_len);
+
+        uint64_t offset = (uint64_t)rel->offset;
+        write_exact(f, &offset, sizeof(offset));
+
+        uint32_t sym_len = (uint32_t)strlen(rel->symbol);
+        write_exact(f, &sym_len, sizeof(sym_len));
+        write_exact(f, rel->symbol, sym_len);
+
+        uint32_t type = (uint32_t)rel->type;
+        write_exact(f, &type, sizeof(type));
+    }
+
+    fclose(f);
+}
+
 
 void write_text_output_file(const char* filename) {
 	FILE *f = fopen(filename, "w");
@@ -1137,6 +1227,7 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
+	flatten_all_dpools();
 
 	for(size_t i = 0; i < equ_symbol_count; i++) {
 		EquSymbol esym = equ_symbols[i];
@@ -1148,10 +1239,8 @@ int main(int argc, char *argv[]) {
 
 		sym->defined = true;
 		sym->relocatable = false;
-		sym->section = strdup(state.current_section);
 
 		sym->offset = calc_expression(esym.expression);
-		printf("%s = %zX\n", esym.symbol, sym->offset);
 
 		if (pending_has_mem_symbol(esym.symbol)) {
 			if (sym->offset > 0xFFF) {

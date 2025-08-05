@@ -9,6 +9,8 @@
 #define MAX_INPUT_FILES 32
 #define MAX_PLACEMENTS 32
 #define MAX_SECTIONS 128
+#define MAX_SECTIONS_PER_OBJECT 128
+#define MAX_OBJECT_FILES 64
 
 typedef struct {
     char section_name[64];
@@ -31,8 +33,18 @@ static size_t global_symbol_count = 0;
 static Section sections[MAX_SECTIONS];
 static size_t section_count = 0;
 
-static Relocation relocations[MAX_RELOCATIONS];
-static size_t relocation_count = 0;
+typedef struct {
+    Symbol symbols[MAX_SYMBOLS];
+    size_t symbol_count;
+    Relocation relocations[MAX_RELOCATIONS];
+    size_t reloc_count;
+    size_t section_global_index[MAX_SECTIONS_PER_OBJECT];
+    size_t section_offset_in_global[MAX_SECTIONS_PER_OBJECT];
+    size_t section_count;
+} ObjectFile;
+
+static ObjectFile object_files[MAX_OBJECT_FILES];
+static size_t object_file_count = 0;
 
 void print_usage() {
     fprintf(stderr,
@@ -60,13 +72,6 @@ Symbol* find_symbol(const char *name) {
             return &global_symbols[i];
     }
     return NULL;
-}
-
-void write_u32_le(unsigned char *data, size_t offset, uint32_t value) {
-    data[offset+0] = (value >> 0) & 0xFF;
-    data[offset+1] = (value >> 8) & 0xFF;
-    data[offset+2] = (value >> 16) & 0xFF;
-    data[offset+3] = (value >> 24) & 0xFF;
 }
 
 bool parse_args(int argc, char **argv, LinkerOptions *opts) {
@@ -135,392 +140,511 @@ bool parse_args(int argc, char **argv, LinkerOptions *opts) {
     return true;
 }
 
-bool load_object_file(const char *filename) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open file %s\n", filename);
-        return false;
+static void read_exact(FILE *f, void *buf, size_t sz) {
+    if(fread(buf, 1, sz, f) != sz) {
+        fprintf(stderr, "Error: Failed to read data\n");
+		exit(1);
     }
+}
+
+void load_sections(const LinkerOptions *opts, FILE* f, ObjectFile *of) {
+    static struct {
+        char name[64];
+        uint32_t addr;
+    } cursors[MAX_SECTIONS];
+    static int cursor_count = 0;
 
     uint32_t sec_count;
-    if (fread(&sec_count, sizeof(uint32_t), 1, f) != 1) {
-        fprintf(stderr, "Error: Failed to read section count\n");
-        fclose(f);
-        return false;
-    }
+    read_exact(f, &sec_count, sizeof(sec_count));
 
     for (uint32_t i = 0; i < sec_count; i++) {
-        if (section_count >= MAX_SYMBOLS) {
-            fprintf(stderr, "Error: Too many sections\n");
-            fclose(f);
-            return false;
-        }
+        char name[64];
+        read_exact(f, name, sizeof(name));
+        name[63] = '\0';
 
-        Section *sec = &sections[section_count++];
-        memset(sec, 0, sizeof(Section));
+        uint64_t size64;
+        read_exact(f, &size64, sizeof(size64));
+        size_t size = (size_t)size64;
 
-        if (fread(sec->name, 1, 64, f) != 64) {
-            fprintf(stderr, "Error: Failed to read section name\n");
-            fclose(f);
-            return false;
+        unsigned char *data = size ? malloc(size) : NULL;
+        if (size && !data) {
+            fprintf(stderr, "Error: malloc failed for section %s", name);
+			exit(1);
         }
-        sec->name[63] = '\0';
+        if (size) read_exact(f, data, size);
 
-        if (fread(&sec->size, sizeof(size_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read section size\n");
-            fclose(f);
-            return false;
-        }
-
-        sec->capacity = sec->size;
-        sec->data = malloc(sec->capacity);
-        if (!sec->data) {
-            fprintf(stderr, "Error: malloc failed for section data\n");
-            fclose(f);
-            return false;
-        }
-        if (fread(sec->data, 1, sec->size, f) != sec->size) {
-            fprintf(stderr, "Error: Failed to read section data\n");
-            fclose(f);
-            return false;
-        }
-    }
-
-    if (fread(&global_symbol_count, sizeof(size_t), 1, f) != 1) {
-        fprintf(stderr, "Error: Failed to read symbol count\n");
-        fclose(f);
-        return false;
-    }
-
-    for (size_t i = 0; i < global_symbol_count; i++) {
-        if (i >= MAX_SYMBOLS) {
-            fprintf(stderr, "Error: Too many symbols\n");
-            fclose(f);
-            return false;
-        }
-        Symbol *sym = &global_symbols[i];
-        memset(sym, 0, sizeof(Symbol));
-
-        uint32_t name_len;
-        if (fread(&name_len, sizeof(uint32_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read symbol name length\n");
-            fclose(f);
-            return false;
-        }
-        sym->name = malloc(name_len + 1);
-        if (!sym->name) {
-            fprintf(stderr, "Error: malloc failed for symbol name\n");
-            fclose(f);
-            return false;
-        }
-        if (fread(sym->name, 1, name_len, f) != name_len) {
-            fprintf(stderr, "Error: Failed to read symbol name\n");
-            fclose(f);
-            return false;
-        }
-        sym->name[name_len] = '\0';
-
-        if (fread(&sym->offset, sizeof(size_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read symbol offset\n");
-            fclose(f);
-            return false;
-        }
-
-        uint32_t sec_len;
-        if (fread(&sec_len, sizeof(uint32_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read symbol section name length\n");
-            fclose(f);
-            return false;
-        }
-        if (sec_len > 0) {
-            char *sec_name = malloc(sec_len + 1);
-            if (!sec_name) {
-                fprintf(stderr, "Error: malloc failed for symbol section name\n");
-                fclose(f);
-                return false;
+        uint32_t addr = 0;
+        int found = 0;
+        for (int p = 0; p < opts->placement_count; p++) {
+            if (!strcmp(opts->placements[p].section_name, name)) {
+                addr = opts->placements[p].address;
+                found = 1;
+                break;
             }
-            if (fread(sec_name, 1, sec_len, f) != sec_len) {
-                fprintf(stderr, "Error: Failed to read symbol section name\n");
-                free(sec_name);
-                fclose(f);
-                return false;
+        }
+        if (!found) {
+            for (int c = 0; c < cursor_count; c++) {
+                if (!strcmp(cursors[c].name, name)) {
+                    addr = cursors[c].addr;
+                    found = 1;
+                    break;
+                }
             }
-            sec_name[sec_len] = '\0';
-            sym->section = sec_name;
+        }
+        if (!found) {
+            strncpy(cursors[cursor_count].name, name, 63);
+            cursors[cursor_count].addr = 0;
+            addr = 0;
+            cursor_count++;
+        }
+
+        Section *s = find_section(name);
+        size_t global_idx, local_off = 0;
+
+        if (s) {
+            local_off = s->size;
+            unsigned char *new_data = realloc(s->data, s->size + size);
+            if (!new_data) {
+                fprintf(stderr, "Error: realloc failed for section %s\n", name);
+				exit(1);
+            }
+            s->data = new_data;
+            if (size) memcpy(s->data + local_off, data, size);
+            s->size += size;
+            s->capacity = s->size;
+            free(data);
+            global_idx = s - sections;
         } else {
-            sym->section = NULL;
+            if (section_count >= MAX_SECTIONS) {
+                fprintf(stderr, "Error: Too many sections\n");
+				exit(1);
+            }
+            s = &sections[section_count++];
+            memset(s, 0, sizeof(Section));
+            strncpy(s->name, name, 63);
+            s->size = s->capacity = size;
+            s->data = data;
+            s->base = addr;
+            global_idx = s - sections;
         }
 
-        if (fread(&sym->defined, sizeof(bool), 1, f) != 1 ||
-            fread(&sym->global, sizeof(bool), 1, f) != 1 ||
-            fread(&sym->external, sizeof(bool), 1, f) != 1 ||
-			fread(&sym->relocatable, sizeof(bool), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read symbol flags\n");
-            fclose(f);
-            return false;
-        }
-    }
-
-    if (fread(&relocation_count, sizeof(size_t), 1, f) != 1) {
-        fprintf(stderr, "Error: Failed to read relocation count\n");
-        fclose(f);
-        return false;
-    }
-
-    for (size_t i = 0; i < relocation_count; i++) {
-        if (i >= MAX_RELOCATIONS) {
-            fprintf(stderr, "Error: Too many relocations\n");
-            fclose(f);
-            return false;
-        }
-
-        Relocation *rel = &relocations[i];
-        memset(rel, 0, sizeof(Relocation));
-
-        uint32_t sec_len;
-        if (fread(&sec_len, sizeof(uint32_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read relocation section name length\n");
-            fclose(f);
-            return false;
-        }
-        char *sec_name = malloc(sec_len + 1);
-        if (!sec_name) {
-            fprintf(stderr, "Error: malloc failed for relocation section name\n");
-            fclose(f);
-            return false;
-        }
-        if (fread(sec_name, 1, sec_len, f) != sec_len) {
-            fprintf(stderr, "Error: Failed to read relocation section name\n");
-            free(sec_name);
-            fclose(f);
-            return false;
-        }
-        sec_name[sec_len] = '\0';
-
-        rel->section = find_section(sec_name);
-        free(sec_name);
-
-        if (!rel->section) {
-            fprintf(stderr, "Error: Relocation references unknown section\n");
-            fclose(f);
-            return false;
-        }
-
-        if (fread(&rel->offset, sizeof(size_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read relocation offset\n");
-            fclose(f);
-            return false;
-        }
-
-        uint32_t sym_len;
-        if (fread(&sym_len, sizeof(uint32_t), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read relocation symbol name length\n");
-            fclose(f);
-            return false;
-        }
-        rel->symbol = malloc(sym_len + 1);
-        if (!rel->symbol) {
-            fprintf(stderr, "Error: malloc failed for relocation symbol name\n");
-            fclose(f);
-            return false;
-        }
-        if (fread(rel->symbol, 1, sym_len, f) != sym_len) {
-            fprintf(stderr, "Error: Failed to read relocation symbol name\n");
-            fclose(f);
-            return false;
-        }
-        rel->symbol[sym_len] = '\0';
-
-        int type_int;
-        if (fread(&type_int, sizeof(int), 1, f) != 1) {
-            fprintf(stderr, "Error: Failed to read relocation type\n");
-            fclose(f);
-            return false;
-        }
-        rel->type = (RelocType)type_int;
-    }
-
-    fclose(f);
-    return true;
-}
-
-bool load_input_files(const LinkerOptions *opts) {
-    for (int i = 0; i < opts->input_count; i++) {
-        const char *filename = opts->input_files[i];
-        if (!load_object_file(filename)) {
-            fprintf(stderr, "Error loading object file: %s\n", filename);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool link_objects(LinkerOptions *opts) {
-    uint32_t next_address = 0;
-
-    for (size_t i = 0; i < section_count; i++) {
-        Section *sec = &sections[i];
-        bool found = false;
-
-        for (int j = 0; j < opts->placement_count; j++) {
-            if (strcmp(sec->name, opts->placements[j].section_name) == 0) {
-                sec->base = opts->placements[j].address;
-                found = true;
-
-                uint32_t end_address = sec->base + sec->size;
-                if (end_address > next_address)
-                    next_address = end_address;
+        for (int c = 0; c < cursor_count; c++) {
+            if (!strcmp(cursors[c].name, name)) {
+                cursors[c].addr = s->base + s->size;
                 break;
             }
         }
 
-        if (!found) {
-            sec->base = next_address;
-            next_address += sec->size;
+        if (of->section_count >= MAX_SECTIONS_PER_OBJECT) {
+            fprintf(stderr, "Error: too many sections\n");
+            fclose(f);
+			exit(1);
         }
+
+        of->section_global_index[of->section_count] = global_idx;
+        of->section_offset_in_global[of->section_count++] = local_off;
+    }
+}
+
+void load_symbols(FILE* f, ObjectFile *of) {
+    uint32_t sym_count;
+    read_exact(f, &sym_count, sizeof(sym_count));
+    if (sym_count > MAX_SYMBOLS) {
+        fprintf(stderr, "Error: Too many symbols\n");
+        exit(1);
     }
 
-    for (size_t i = 0; i < global_symbol_count; i++) {
-        Symbol *sym = &global_symbols[i];
+    for (uint32_t i = 0; i < sym_count; i++) {
+        Symbol temp;
+        memset(&temp, 0, sizeof(Symbol));
 
-        if (!sym->defined) {
-            fprintf(stderr, "Error: Undefined symbol %s\n", sym->name);
-            return false;
+        uint32_t name_len;
+        read_exact(f, &name_len, sizeof(name_len));
+        temp.name = malloc(name_len + 1);
+        read_exact(f, temp.name, name_len);
+        temp.name[name_len] = '\0';
+
+        uint64_t off;
+        read_exact(f, &off, sizeof(off));
+        temp.offset = (size_t)off;
+
+        uint32_t sec_len;
+        read_exact(f, &sec_len, sizeof(sec_len));
+        if (sec_len > 0) {
+            temp.section = malloc(sec_len + 1);
+            read_exact(f, temp.section, sec_len);
+            temp.section[sec_len] = '\0';
         }
 
-        Section *sec = find_section(sym->section);
-        if (!sec) {
-            fprintf(stderr, "Error: Symbol %s references unknown section %s\n", sym->name, sym->section);
-            return false;
+        uint8_t b[4];
+        read_exact(f, b, 4);
+        temp.defined = !!b[0];
+        temp.global = !!b[1];
+        temp.external = !!b[2];
+        temp.relocatable = !!b[3];
+
+        if (temp.relocatable && temp.section) {
+            for (size_t si = 0; si < of->section_count; si++) {
+                Section *s = &sections[of->section_global_index[si]];
+                if (!strcmp(s->name, temp.section)) {
+                    temp.offset += s->base;
+                    break;
+                }
+            }
         }
 
-		if(sym->relocatable) {
-        	sym->offset += sec->base;
-		}
+        if (of->symbol_count >= MAX_SYMBOLS) {
+            fprintf(stderr, "Error: too many local symbols\n");
+            exit(1);
+        }
+
+        Symbol *dst = &of->symbols[of->symbol_count++];
+        memset(dst, 0, sizeof(Symbol));
+        dst->name = strdup(temp.name);
+        dst->offset = temp.offset;
+        dst->section = temp.section ? strdup(temp.section) : NULL;
+        dst->defined = temp.defined;
+        dst->global = temp.global;
+        dst->external = temp.external;
+        dst->relocatable = temp.relocatable;
+
+        if (temp.global) {
+            Symbol *existing = find_symbol(temp.name);
+
+            if (existing) {
+                if (existing->defined && temp.defined) {
+                    fprintf(stderr, "Linker error: multiple definition of symbol '%s'\n", temp.name);
+                    free(temp.name);
+                    if (temp.section) free(temp.section);
+                    exit(1);
+                }
+
+                if (temp.defined) {
+                    existing->offset = temp.offset;
+                    if (existing->section) free(existing->section);
+                    existing->section = temp.section ? strdup(temp.section) : NULL;
+                    existing->defined = true;
+                }
+
+                existing->external    |= temp.external;
+                existing->relocatable |= temp.relocatable;
+                existing->global      |= temp.global;
+
+            } else {
+                if (global_symbol_count >= MAX_SYMBOLS) {
+                    fprintf(stderr, "Error: global symbol table full\n");
+                    free(temp.name);
+                    if (temp.section) free(temp.section);
+                    exit(1);
+                }
+
+                Symbol *new_sym = &global_symbols[global_symbol_count++];
+                memset(new_sym, 0, sizeof(Symbol));
+                new_sym->name        = strdup(temp.name);
+                new_sym->offset      = temp.offset;
+                new_sym->section     = temp.section ? strdup(temp.section) : NULL;
+                new_sym->defined     = temp.defined;
+                new_sym->global      = temp.global;
+                new_sym->external    = temp.external;
+                new_sym->relocatable = temp.relocatable;
+            }
+        }
+
+        free(temp.name);
+        if (temp.section) free(temp.section);
+    }
+}
+
+void load_relocations(FILE* f, ObjectFile *of) {
+    uint32_t reloc_cnt;
+    read_exact(f, &reloc_cnt, sizeof(reloc_cnt));
+    if (reloc_cnt > MAX_RELOCATIONS) {
+        fprintf(stderr, "Error: Too many relocations\n");
+		exit(1);
     }
 
-	for (size_t i = 0; i < relocation_count; i++) {
-		Relocation *rel = &relocations[i];
+    for (uint32_t i = 0; i < reloc_cnt; i++) {
+        if (of->reloc_count >= MAX_RELOCATIONS) {
+            fprintf(stderr, "Error: too many relocations\n");
+			exit(1);
+        }
+        Relocation *rel = &of->relocations[of->reloc_count++];
+        memset(rel, 0, sizeof(Relocation));
 
-		if (!rel->section || !rel->symbol) {
-			fprintf(stderr, "Error: Relocation %zu has invalid section or symbol\n", i);
-			return false;
+        uint32_t sec_len;
+        read_exact(f, &sec_len, sizeof(sec_len));
+        char *sec_name = sec_len ? malloc(sec_len + 1) : NULL;
+        if (sec_name) {
+            read_exact(f, sec_name, sec_len);
+            sec_name[sec_len] = '\0';
+            rel->section = find_section(sec_name);
+            free(sec_name);
+        }
+
+        if (!rel->section) {
+            fprintf(stderr, "Error: Relocation references unknown section\n");
+			exit(1);
+        }
+
+        uint64_t offset;
+        read_exact(f, &offset, sizeof(offset));
+        rel->offset = (size_t)offset;
+
+        uint32_t sym_len;
+        read_exact(f, &sym_len, sizeof(sym_len));
+        rel->symbol = malloc(sym_len + 1);
+        read_exact(f, rel->symbol, sym_len);
+        rel->symbol[sym_len] = '\0';
+
+        uint32_t type;
+        read_exact(f, &type, sizeof(type));
+        rel->type = (RelocType)type;
+    }
+}
+
+void load_input_files(const LinkerOptions *opts) {
+	for (int i = 0; i < opts->input_count; i++) {
+		const char *filename = opts->input_files[i];
+
+		if (object_file_count >= MAX_OBJECT_FILES) {
+			fprintf(stderr, "Error: too many object files\n");
+			exit(1);
 		}
 
-		Symbol *target = find_symbol(rel->symbol);
-		if (!target || !target->defined) {
-			fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
-			return false;
+		FILE *f = fopen(filename, "rb");
+		if (!f) {
+			fprintf(stderr, "Error: Cannot open file %s\n", filename);
 		}
 
-		Section *sec = rel->section;
-		size_t offset = rel->offset;
+		ObjectFile *of = &object_files[object_file_count++];
+		memset(of, 0, sizeof(ObjectFile));
 
-		printf("=== Section %s content (size = %zu) ===\n", sec->name, sec->size);
-		for (size_t b = 0; b < sec->size; b++) {
-			if (b % 16 == 0) printf("\n%04zx: ", b);
-			printf("%02X ", sec->data[b]);
-		}
-		printf("\n");
+		load_sections(opts, f, of);
+		load_symbols(f, of);
+		load_relocations(f, of);
 
-		if (offset + 4 > sec->size) {
-			fprintf(stderr, "Error: Relocation offset out of bounds in section %s (offset %zu + 4 > %zu)\n",
-					sec->name, offset, sec->size);
-			return false;
-		}
+		fclose(f);
+	}
+}
 
-		if (rel->type == RELOC_ABS) {
-			uint32_t abs_addr = target->offset;
-			printf("RELOC_ABS: patching absolute address 0x%08X at offset 0x%zX\n", abs_addr, offset);
-			sec->data[offset + 0] = sec->data[offset + 0] | ((abs_addr >> 24) & 0xFF);
-			sec->data[offset + 1] = sec->data[offset + 1] | ((abs_addr >> 16) & 0xFF);
-			sec->data[offset + 2] = sec->data[offset + 2] | ((abs_addr >> 8) & 0xFF);
-			sec->data[offset + 3] = sec->data[offset + 3] | ((abs_addr >> 0) & 0xFF);
-		} else if (rel->type == RELOC_PC_REL) {
-			size_t instr_start = (offset >= 2) ? offset - 2 : 0;
-			uint32_t pc = sec->base + instr_start + 4;
-			int32_t relative = (int32_t)target->offset - (int32_t)pc;
+void resolve_external_symbols() {
+    for (size_t fi = 0; fi < object_file_count; fi++) {
+        ObjectFile *of = &object_files[fi];
 
-			if (relative > 0xFFF) {
-				fprintf(stderr, "Error: PC-relative relocation out of range for symbol %s (rel = %d)\n",
-						rel->symbol, relative);
-				return false;
+        for (size_t si = 0; si < of->symbol_count; si++) {
+            Symbol *sym = &of->symbols[si];
+
+            if (sym->external && !sym->defined) {
+                Symbol *resolved = find_symbol(sym->name);
+
+                if (!resolved || !resolved->defined) {
+                    fprintf(stderr, "Linker error: undefined external symbol '%s'\n", sym->name);
+                    exit(1);
+                }
+
+                sym->offset = resolved->offset;
+                if (sym->section) {
+                    free(sym->section);
+                }
+                sym->section = resolved->section ? strdup(resolved->section) : NULL;
+                sym->defined = true;
+            }
+        }
+    }
+}
+
+void resolve_relocations() {
+	for (size_t of_i = 0; of_i < object_file_count; of_i++) {
+		ObjectFile *of = &object_files[of_i];
+
+		for (size_t ri = 0; ri < of->reloc_count; ri++) {
+			Relocation *rel = &of->relocations[ri];
+			if (!rel->section || !rel->symbol) {
+				fprintf(stderr, "Error: Relocation %zu in object %zu has invalid section or symbol\n", ri, of_i);
+				exit(1);
 			}
 
-			uint32_t encoded12 = (uint32_t)(relative & 0xFFF);
+			Symbol *target = NULL;
+			for (size_t si = 0; si < of->symbol_count; si++) {
+				if (strcmp(of->symbols[si].name, rel->symbol) == 0) {
+					target = &of->symbols[si];
+					break;
+				}
+			}
 
-			uint32_t orig = 0;
-			orig |= ((uint32_t)sec->data[instr_start + 0]) << 24;
-			orig |= ((uint32_t)sec->data[instr_start + 1]) << 16;
-			orig |= ((uint32_t)sec->data[instr_start + 2]) << 8;
-			orig |= ((uint32_t)sec->data[instr_start + 3]) << 0;
+			if (!target || !target->defined) {
+				fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
+				exit(1);
+			}
 
-			uint32_t patched = orig | encoded12;
+			Section *sec = rel->section;
+			size_t section_local_offset = 0;
+			for (size_t i = 0; i < of->section_count; i++) {
+				if (&sections[of->section_global_index[i]] == sec) {
+					section_local_offset = of->section_offset_in_global[i];
+					break;
+				}
+			}
 
-			sec->data[instr_start + 0] = (patched >> 24) & 0xFF;
-			sec->data[instr_start + 1] = (patched >> 16) & 0xFF;
-			sec->data[instr_start + 2] = (patched >> 8) & 0xFF;
-			sec->data[instr_start + 3] = (patched >> 0) & 0xFF;
+			size_t offset = rel->offset + section_local_offset;
+			if (offset + 4 > sec->size) {
+				fprintf(stderr, "Error: Relocation offset out of bounds in section %s\n", sec->name);
+				exit(1);
+			}
 
-			printf("RELOC_PC_REL: target=0x%08zX pc=0x%08X rel=%d encoded=0x%03X\n",
-					target->offset, pc, relative, encoded12);
-		} else {
-			fprintf(stderr, "Error: Unknown relocation type\n");
-			return false;
+			uint32_t addr = target->offset;
+
+			if (rel->type == RELOC_ABS) {
+				sec->data[offset + 0] |= (addr >> 24) & 0xFF;
+				sec->data[offset + 1] |= (addr >> 16) & 0xFF;
+				sec->data[offset + 2] |= (addr >> 8) & 0xFF;
+				sec->data[offset + 3] |= (addr >> 0) & 0xFF;
+			} else if (rel->type == RELOC_PC_REL) {
+				size_t instr = (offset >= 2) ? offset - 2 : 0;
+				uint32_t pc = (uint32_t)instr + 4;
+				uint32_t rel_val = addr - pc + section_local_offset;
+				uint32_t orig = (sec->data[instr + 0] << 24) | (sec->data[instr + 1] << 16)
+					| (sec->data[instr + 2] << 8) | sec->data[instr + 3];
+				uint32_t patched = orig | rel_val;
+				sec->data[instr + 0] = (patched >> 24) & 0xFF;
+				sec->data[instr + 1] = (patched >> 16) & 0xFF;
+				sec->data[instr + 2] = (patched >> 8) & 0xFF;
+				sec->data[instr + 3] = (patched >> 0) & 0xFF;
+			}
+		}
+	}
+}
+
+void merge_sections() {
+    for (size_t i = 0; i < section_count; i++) {
+        Section *a = &sections[i];
+
+        for (size_t j = i + 1; j < section_count; ) {
+            Section *b = &sections[j];
+
+            if (strcmp(a->name, b->name) == 0) {
+                a->data = realloc(a->data, a->size + b->size);
+                memcpy(a->data + a->size, b->data, b->size);
+                a->size += b->size;
+
+                for (size_t k = j + 1; k < section_count; k++) {
+                    sections[k - 1] = sections[k];
+                }
+                section_count--;
+            } else {
+                j++;
+            }
+        }
+    }
+}
+
+void assign_section_bases(const LinkerOptions *opts) {
+    bool assigned[MAX_SECTIONS] = { false };
+
+    for (int i = 0; i < opts->placement_count; i++) {
+        const char *placement_name = opts->placements[i].section_name;
+
+        for (size_t j = 0; j < section_count; j++) {
+            Section *s = &sections[j];
+            if (strcmp(s->name, placement_name) == 0) {
+                assigned[j] = true;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < section_count; i++) {
+        if (!assigned[i]) continue;
+
+        for (size_t j = i + 1; j < section_count; j++) {
+            if (!assigned[j]) continue;
+            Section *a = &sections[i];
+            Section *b = &sections[j];
+            size_t a_end = (size_t)a->base + a->size;
+            size_t b_end = (size_t)b->base + b->size;
+            if ((a->base < b_end && a_end > b->base)) {
+                fprintf(stderr, "Linker error: sections '%s' and '%s' overlap (0x%lX ~ 0x%lX)\n",
+                        a->name, b->name,
+                        (unsigned long)((a->base < b->base) ? a->base : b->base),
+                        (unsigned long)((a_end > b_end) ? a_end : b_end));
+                exit(1);
+            }
+        }
+    }
+
+    size_t next_base = 0;
+    for (size_t i = 0; i < section_count; i++) {
+        if (assigned[i]) continue;
+        Section *s = &sections[i];
+        while (1) {
+            bool conflict = false;
+            for (size_t j = 0; j < section_count; j++) {
+                if (i == j) continue;
+                Section *other = &sections[j];
+                if (!assigned[j] && other->base == 0) continue;
+                size_t o_start = other->base;
+                size_t o_end = (size_t)other->base + other->size;
+                if (!(next_base + s->size <= o_start || next_base >= o_end)) {
+                    next_base = o_end;
+                    conflict = true;
+                    break;
+                }
+            }
+
+            if (!conflict) break;
+        }
+        s->base = next_base;
+        assigned[i] = true;
+        next_base += s->size;
+    }
+}
+
+void write_output(LinkerOptions *opts) {
+	FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
+	if (!f) {
+		fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
+		exit(1);
+	}
+
+	if (opts->hex_output) {
+		Section* sorted[MAX_SECTIONS];
+		size_t sorted_count = section_count;
+		for (size_t i = 0; i < section_count; i++) {
+			sorted[i] = &sections[i];
+		}
+		for (size_t i = 1; i < sorted_count; i++) {
+			Section* key = sorted[i];
+			size_t j = i;
+			while (j > 0 && sorted[j - 1]->base > key->base) {
+				sorted[j] = sorted[j - 1];
+				j--;
+			}
+			sorted[j] = key;
+		}
+
+		for (size_t si = 0; si < sorted_count; si++) {
+			Section *sec = sorted[si];
+			uint32_t base_addr = (uint32_t)sec->base;
+			for (size_t j = 0; j < sec->size; j += 8) {
+				fprintf(f, "%08X: ", base_addr + (uint32_t)j);
+				size_t line_end = j + 8;
+				if (line_end > sec->size)
+					line_end = sec->size;
+				for (size_t k = j; k < line_end; k++) {
+					fprintf(f, "%02X", (unsigned char)sec->data[k]);
+					if (k + 1 < line_end)
+						fputc(' ', f);
+				}
+				fprintf(f, "\n");
+			}
+		}
+	} else if (opts->relocatable_output) {
+		for (size_t i = 0; i < section_count; i++) {
+			Section *sec = &sections[i];
+			fwrite(sec->data, 1, sec->size, f);
 		}
 	}
 
-	return true;
-}
-
-bool write_output(LinkerOptions *opts) {
-    FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
-        return false;
-    }
-
-    if (opts->hex_output) {
-        Section* sorted[MAX_SECTIONS];
-        size_t sorted_count = section_count;
-        for (size_t i = 0; i < section_count; i++) {
-            sorted[i] = &sections[i];
-        }
-        for (size_t i = 1; i < sorted_count; i++) {
-            Section* key = sorted[i];
-            size_t j = i;
-            while (j > 0 && sorted[j - 1]->base > key->base) {
-                sorted[j] = sorted[j - 1];
-                j--;
-            }
-            sorted[j] = key;
-        }
-
-        for (size_t si = 0; si < sorted_count; si++) {
-            Section *sec = sorted[si];
-            uint32_t base_addr = (uint32_t)sec->base;
-            for (size_t j = 0; j < sec->size; j += 8) {
-                fprintf(f, "%08X: ", base_addr + (uint32_t)j);
-                size_t line_end = j + 8;
-                if (line_end > sec->size)
-                    line_end = sec->size;
-                for (size_t k = j; k < line_end; k++) {
-                    fprintf(f, "%02X", (unsigned char)sec->data[k]);
-                    if (k + 1 < line_end)
-                        fputc(' ', f);
-                }
-                fprintf(f, "\n");
-            }
-        }
-    } else if (opts->relocatable_output) {
-        for (size_t i = 0; i < section_count; i++) {
-            Section *sec = &sections[i];
-            fwrite(sec->data, 1, sec->size, f);
-        }
-    }
-
-    fclose(f);
-    return true;
+	fclose(f);
 }
 
 int main(int argc, char **argv) {
@@ -530,21 +654,12 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	if (!load_input_files(&opts)) {
-		fprintf(stderr, "Failed to load input files\n");
-		return 2;
-	}
+	load_input_files(&opts);
+	resolve_external_symbols();
+	resolve_relocations();
+	merge_sections();
+	assign_section_bases(&opts);
+	write_output(&opts);
 
-	if (!link_objects(&opts)) {
-		fprintf(stderr, "Linking failed\n");
-		return 3;
-	}
-
-	if (!write_output(&opts)) {
-		fprintf(stderr, "Writing output failed\n");
-		return 4;
-	}
-
-	printf("Linking successful, output: %s\n", opts.output_filename);
 	return 0;
 }

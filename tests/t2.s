@@ -1,4 +1,5 @@
 .equ foo, 0xABC + value
+.extern value1
 .section text
 	jmp 0x100
 	jmp 0x12345678
@@ -37,5 +38,4 @@ value:
 
 .section data
 .word 0x69696969, 0x74747474
-value1:
 .word 0xFFFFFFFF

@@ -17,6 +17,7 @@ typedef struct {
     bool global;
     bool external;
 	bool relocatable;
+	bool dpool;
 } Symbol;
 
 typedef struct {
@@ -25,6 +26,10 @@ typedef struct {
     size_t capacity;
     size_t size;
 	size_t base;
+
+    unsigned char *dpool_data;
+    size_t dpool_capacity;
+    size_t dpool_size;
 } Section;
 
 typedef enum {
@@ -38,6 +43,7 @@ typedef struct {
 	size_t size;
     char *symbol;
     RelocType type;
+	bool dpool;
 } Relocation;
 
 #endif
