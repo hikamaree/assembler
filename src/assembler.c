@@ -15,24 +15,18 @@ extern FILE *yyin;
 
 char* g_current_yytext = NULL;
 
-void assembler_handle_label(const char* label);
-void assembler_handle_section(const char* section_name);
-void assembler_handle_word(const StringList* words);
-void assembler_handle_skip(int size);
-void assembler_handle_global(const StringList* symbols);
-void assembler_handle_extern(const StringList* symbols);
-void assembler_handle_end(void);
-void assembler_handle_instruction(const char* mnemonic, const StringList* operands);
+// void assembler_handle_label(const char* label);
+// void assembler_handle_section(const char* section_name);
+// void assembler_handle_word(const StringList* words);
+// void assembler_handle_skip(int size);
+// void assembler_handle_global(const StringList* symbols);
+// void assembler_handle_extern(const StringList* symbols);
+// void assembler_handle_end(void);
+// void assembler_handle_instruction(const char* mnemonic, const StringList* operands);
 
 #define CHECK_REG(op, idx) \
     if ((op).type != OPERAND_REG) { \
         fprintf(stderr, "Operand %d must be a register\n", idx); \
-        exit(EXIT_FAILURE); \
-    }
-
-#define CHECK_LITERAL_OR_SYMBOL(op, idx) \
-    if ((op).type != OPERAND_LITERAL && (op).type != OPERAND_SYMBOL) { \
-        fprintf(stderr, "Operand %d must be a literal or symbol\n", idx); \
         exit(EXIT_FAILURE); \
     }
 
@@ -178,7 +172,7 @@ void pending_remove_mem_symbol(const char *name) {
     }
 }
 
-uint32_t calc_expression(Expression* e) {
+int32_t calc_expression(Expression* e) {
 	int op1 = 0;
 	if(e->op1.type == OPERAND_LITERAL) {
 		op1 = e->op1.literal;
@@ -359,8 +353,8 @@ void assembler_handle_label(const char* label) {
 	sym->offset = sec->size;
 
     if (pending_has_mem_symbol(label)) {
-        if (sym->offset > 0xFFF) {
-            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in prior MEM operand usage.\n", label, sym->offset);
+		if (sym->offset < -2048 || sym->offset > 2047) {
+            fprintf(stderr, "Symbol %s offset 0x%X too large to embed in prior MEM operand usage.\n", label, sym->offset);
             exit(EXIT_FAILURE);
         }
         pending_remove_mem_symbol(label);
@@ -445,8 +439,8 @@ static void emit(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
 }
 
 void emit_instruction(uint8_t oc, uint8_t mod, uint8_t regA, uint8_t regB, uint8_t regC, int16_t disp) {
-	if (disp < 0 || disp > 0xFFF) {
-        fprintf(stderr, "Disp out of range: %X\n", disp);
+	if (disp < -2048 || disp >= 2048) {
+        fprintf(stderr, "Disp out of range: %X (%d)\n", disp, disp);
         exit(1);
     }
     uint8_t disp_high = (disp >> 8) & 0x0F;
@@ -479,7 +473,7 @@ void assembler_handle_ret(void) {
 
 void assembler_handle_push(const Operand* r) {
     CHECK_REG(*r, 1);
-    emit_instruction(0x8, 0x1, 14, 0, r->reg, 0xFFC);
+    emit_instruction(0x8, 0x1, 14, 0, r->reg, 0xFFFC);
 }
 
 void assembler_handle_pop(const Operand* r) {
@@ -502,8 +496,8 @@ void assembler_handle_call(const Operand* op) {
 				if (op->mem.offset_symbol) {
 				    Symbol* sym = find_symbol(op->mem.offset_symbol);
 				    if (sym && sym->defined) {
-				        if (sym->offset > 0xFFF) {
-				            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in MEM operand.\n", op->mem.offset_symbol, sym->offset);
+				        if (sym->offset < -2048 || sym->offset > 2047) {
+				            fprintf(stderr, "Symbol %s offset 0x%X too large to embed in MEM operand.\n", op->mem.offset_symbol, sym->offset);
 				            exit(1);
 				        }
 			    		if (sym->relocatable) {
@@ -534,7 +528,7 @@ void assembler_handle_call(const Operand* op) {
 			break;
 
         case OPERAND_ADDR_LITERAL: {
-            if ((uint32_t)op->literal <= 0xFFF) {
+		    if (op->literal >= -2048 && op->literal < 2048) {
                 mod = 0x0;
                 regA = 0;
                 regB = 0;
@@ -548,7 +542,7 @@ void assembler_handle_call(const Operand* op) {
 
                 size_t instr_start = sec->size;
                 size_t reloc_offset = instr_start + 2;
-                char symname[32];
+                char symname[64];
                 snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)op->literal);
                 add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
             }
@@ -561,79 +555,6 @@ void assembler_handle_call(const Operand* op) {
     }
 
 	emit_instruction(0x2, mod, regA, regB, regC, disp);
-}
-
-void assembler_handle_jmp(const Operand* op) {
-    uint8_t mod = 0;
-    uint8_t regA = 0;
-	uint8_t regB = 0;
-	uint8_t regC = 0;
-    int16_t disp = 0;
-
-    Section *sec = get_section(state.current_section);
-
-    switch (op->type) {
-        case OPERAND_MEM:
-            mod = 0x8;
-            regA = op->mem.base_reg;
-			if (op->mem.offset_symbol) {
-			    Symbol* sym = find_symbol(op->mem.offset_symbol);
-			    if (sym && sym->defined) {
-			        if (sym->offset > 0xFFF) {
-			            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in MEM operand.\n", op->mem.offset_symbol, sym->offset);
-			            exit(1);
-			        }
-			    	if (sym->relocatable) {
-			    	    fprintf(stderr, "Symbol %s used in MEM operand can not be relocatable.\n", op->mem.offset_symbol);
-			    	    exit(1);
-			    	}
-			    } else {
-			        pending_add_mem_symbol(op->mem.offset_symbol);
-			    }
-			    add_operand_relocation(op);
-			} else {
-			    disp = op->mem.offset;
-			}
-			break;
-
-        case OPERAND_ADDR_SYMBOL:
-            append_disp_value(op);
-
-            mod = 0x8;
-            regA = 15;
-
-            size_t instr_start = sec->size;
-            size_t reloc_offset = instr_start + 2;
-            char symname[64];
-            snprintf(symname, sizeof(symname), "SYM_%s", op->symbol);
-            add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
-			break;
-
-        case OPERAND_ADDR_LITERAL:
-            if ((uint32_t)op->literal <= 0xFFF) {
-                mod = 0x0;
-                regA = 0;
-                disp = (int16_t)op->literal;
-            } else {
-                append_disp_value(op);
-
-                mod = 0x8;
-                regA = 15;
-
-                size_t instr_start = sec->size;
-                size_t reloc_offset = instr_start + 2;
-                char symname[32];
-                snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)op->literal);
-                add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
-            }
-			break;
-
-        default:
-            fprintf(stderr, "Invalid operand type for jmp\n");
-            exit(1);
-    }
-
-    emit_instruction(0x3, mod, regA, regB, regC, disp);
 }
 
 static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, const Operand* op, uint8_t mod_d, uint8_t mod_i) {
@@ -652,8 +573,8 @@ static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, con
 		if (op->mem.offset_symbol) {
 		    Symbol* sym = find_symbol(op->mem.offset_symbol);
 		    if (sym && sym->defined) {
-		        if (sym->offset > 0xFFF) {
-		            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in MEM operand.\n", op->mem.offset_symbol, sym->offset);
+				if (sym->offset < -2048 || sym->offset > 2047) {
+		            fprintf(stderr, "Symbol %s offset 0x%X too large to embed in MEM operand.\n", op->mem.offset_symbol, sym->offset);
 		            exit(1);
 		        }
 			    if (sym->relocatable) {
@@ -678,21 +599,19 @@ static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, con
         snprintf(symname, sizeof(symname), "SYM_%s", op->symbol);
         add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
     } else if (op->type == OPERAND_ADDR_LITERAL) {
-        uint32_t lit = (uint32_t)op->literal;
-        if (lit <= 0xFFF) {
+		if (op->literal >= -2048 && op->literal < 2048) {
             mod = mod_d;
             regA = 0;
-            disp = (int16_t)lit;
+            disp = (int16_t)op->literal;
         } else {
-            uint32_t pool_offset = append_disp_value(op);
+            append_disp_value(op);
             mod = mod_i;
             regA = 15;
-            disp = pool_offset;
 
             size_t instr_start = sec->size;
             size_t reloc_offset = instr_start + 2;
             char symname[32];
-            snprintf(symname, sizeof(symname), "LIT_%08X", lit);
+            snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)op->literal);
             add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
         }
     } else {
@@ -701,6 +620,11 @@ static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, con
     }
 
     emit_instruction(0x3, mod, regA, regB, regC, disp);
+}
+
+void assembler_handle_jmp(const Operand* op) {
+    Operand r0 = { .type = OPERAND_REG, .reg = 0 };
+    assembler_handle_cond_jump(&r0, &r0, op, 0x0, 0x8);
 }
 
 void assembler_handle_beq(const Operand* r1, const Operand* r2, const Operand* op) {
@@ -724,25 +648,25 @@ void assembler_handle_xchg(const Operand* r1, const Operand* r2) {
 void assembler_handle_add(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
-    emit_instruction(0x5, 0x0, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x5, 0x0, r2->reg, r1->reg, r2->reg, 0);
 }
 
 void assembler_handle_sub(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
-    emit_instruction(0x5, 0x1, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x5, 0x1, r2->reg, r2->reg, r1->reg, 0);
 }
 
 void assembler_handle_mul(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
-    emit_instruction(0x5, 0x2, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x5, 0x2, r2->reg, r1->reg, r2->reg, 0);
 }
 
 void assembler_handle_div(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
-    emit_instruction(0x5, 0x3, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x5, 0x3, r2->reg, r2->reg, r1->reg, 0);
 }
 
 void assembler_handle_not(const Operand* r) {
@@ -754,21 +678,21 @@ void assembler_handle_and(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
 
-    emit_instruction(0x6, 0x1, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x6, 0x1, r2->reg, r1->reg, r2->reg, 0);
 }
 
 void assembler_handle_or(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
 
-    emit_instruction(0x6, 0x2, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x6, 0x2, r2->reg, r1->reg, r2->reg, 0);
 }
 
 void assembler_handle_xor(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
 
-    emit_instruction(0x6, 0x3, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x6, 0x3, r2->reg, r1->reg, r2->reg, 0);
 }
 
 void assembler_handle_shl(const Operand* r1, const Operand* r2) {
@@ -809,8 +733,8 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 			if (src->mem.offset_symbol) {
 			    Symbol* sym = find_symbol(src->mem.offset_symbol);
 			    if (sym && sym->defined) {
-			        if (sym->offset > 0xFFF) {
-			            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in MEM operand.\n", src->mem.offset_symbol, sym->offset);
+					if (sym->offset < -2048 || sym->offset > 2047) {
+			            fprintf(stderr, "Symbol %s offset 0x%X too large to embed in MEM operand.\n", src->mem.offset_symbol, sym->offset);
 			            exit(1);
 			        }
 			        if (sym->relocatable) {
@@ -841,7 +765,7 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 			break;
 
 		case OPERAND_LITERAL:
-		    if ((uint16_t)src->literal <= 0xFFF) {
+		    if (src->literal >= -2048 && src->literal < 2048) {
 		        mod = 0x1;
 		        regB = 0;
 		        regC = 0;
@@ -883,7 +807,7 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 			break;
 
         case OPERAND_ADDR_LITERAL:
-            if ((uint32_t)src->literal <= 0xFFF) {
+		    if (src->literal >= -2048 && src->literal < 2048) {
                 mod = 0x1;
                 regB = 0;
                 regC = 0;
@@ -941,8 +865,8 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
 			if (dst->mem.offset_symbol) {
 			    Symbol* sym = find_symbol(dst->mem.offset_symbol);
 			    if (sym && sym->defined) {
-			        if (sym->offset > 0xFFF) {
-			            fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in MEM operand.\n", dst->mem.offset_symbol, sym->offset);
+					if (sym->offset < -2048 || sym->offset > 2047) {
+			            fprintf(stderr, "Symbol %s offset 0x%X too large to embed in MEM operand.\n", dst->mem.offset_symbol, sym->offset);
 			            exit(1);
 			        }
 			        if (sym->relocatable) {
@@ -973,7 +897,7 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
 			break;
 
         case OPERAND_ADDR_LITERAL:
-            if ((uint32_t)dst->literal <= 0xFFF) {
+		    if (dst->literal >= -2048 && dst->literal < 2048) {
                 mod = 0x0;
                 regA = 0;
                 regB = 0;
@@ -1010,7 +934,7 @@ void assembler_handle_csrrd(const Operand* csr, const Operand* r) {
 void assembler_handle_csrwr(const Operand* r, const Operand* csr) {
     CHECK_REG(*r, 1);
     CHECK_CSR(*csr, 2);
-    emit_instruction(0x9, 0x4, csr->csr, 0, r->reg, 0);
+    emit_instruction(0x9, 0x4, csr->csr, r->reg, 0, 0);
 }
 
 void flatten_all_dpools(void) {
@@ -1038,7 +962,7 @@ void flatten_all_dpools(void) {
         for (size_t si = 0; si < symbol_count; si++) {
             Symbol *s = &symbols[si];
             if (s->dpool && s->section && strcmp(s->section, sec->name) == 0) {
-                s->offset += old_size - 4;
+                s->offset += old_size;
                 s->dpool = false;
             }
         }
@@ -1146,40 +1070,33 @@ void write_text_output_file(const char* filename) {
 		exit(EXIT_FAILURE);
 	}
 
-	fprintf(f, "=== Sections (%d) ===\n", section_count);
+	fprintf(f, "#sections\n");
 	for (int i = 0; i < section_count; i++) {
 		Section *sec = &sections[i];
-		fprintf(f, ".section %s (size: %zu bytes):\n", sec->name, sec->size);
+		fprintf(f, ".%s\n", sec->name);
 		for (uint32_t j = 0; j < sec->size; j++) {
 			fprintf(f, "%02X ", sec->data[j]);
 			if ((j + 1) % 16 == 0) fprintf(f, "\n");
 		}
 		if (sec->size % 16 != 0) fprintf(f, "\n");
-		fprintf(f, "\n");
 	}
 
-	fprintf(f, "=== Symbols (%zu) ===\n", symbol_count);
+	fprintf(f, "\n#symbols\n");
+	fprintf(f, "%-4s %-10s %-6s %-6s %s\n", "NUM", "VALUE", "TYPE", "BIND", "NAME");
+
 	for (size_t i = 0; i < symbol_count; i++) {
 		Symbol *sym = &symbols[i];
-		fprintf(f, "Symbol: %s\n", sym->name);
-		fprintf(f, "  Offset: 0x%zX\n", sym->offset);
-		fprintf(f, "  Section: %s\n", sym->section ? sym->section : "(none)");
-		fprintf(f, "  Defined: %s\n", sym->defined ? "yes" : "no");
-		fprintf(f, "  Global: %s\n", sym->global ? "yes" : "no");
-		fprintf(f, "  External: %s\n", sym->external ? "yes" : "no");
-		fprintf(f, "  Relocatable: %s\n", sym->relocatable ? "yes" : "no");
-		fprintf(f, "\n");
+		fprintf(f, "%-4zu 0x%-8X %-6s %-6s %s\n", i, sym->offset,
+				sym->relocatable ? "REL" : "NOREL", sym->global ? "GLOB" : "LOC", sym->name);
 	}
 
-	fprintf(f, "=== Relocations (%zu) ===\n", reloc_count);
+	fprintf(f, "\n#relocations\n");
+	fprintf(f, "%-4s %-10s %-8s %-20s %s\n", "NUM", "OFFSET", "TYPE", "SYMBOL", "SECTION");
+
 	for (size_t i = 0; i < reloc_count; i++) {
 		Relocation *rel = &relocations[i];
-		fprintf(f, "Relocation #%zu\n", i);
-		fprintf(f, "  Section: %s\n", rel->section->name);
-		fprintf(f, "  Offset: 0x%zX\n", rel->offset);
-		fprintf(f, "  Symbol: %s\n", rel->symbol);
-		fprintf(f, "  Type: %d\n", rel->type);
-		fprintf(f, "\n");
+		fprintf(f, "%-4zu 0x%-8zX %-8s %-20s %s\n", i, rel->offset,
+				rel->type == 0 ? "ABS" : "PC_REL", rel->symbol, rel->section->name);
 	}
 
 	fclose(f);
@@ -1243,8 +1160,8 @@ int main(int argc, char *argv[]) {
 		sym->offset = calc_expression(esym.expression);
 
 		if (pending_has_mem_symbol(esym.symbol)) {
-			if (sym->offset > 0xFFF) {
-				fprintf(stderr, "Symbol %s offset 0x%zX too large to embed in prior MEM operand usage.\n", esym.symbol, sym->offset);
+			if (sym->offset < -2048 || sym->offset > 2047) {
+				fprintf(stderr, "Symbol %s offset 0x%X too large to embed in prior MEM operand usage.\n", esym.symbol, sym->offset);
 				exit(EXIT_FAILURE);
 			}
 			pending_remove_mem_symbol(esym.symbol);

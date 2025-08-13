@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,9 +27,6 @@ typedef struct {
     char *input_files[MAX_INPUT_FILES];
     int input_count;
 } LinkerOptions;
-
-static Symbol global_symbols[MAX_SYMBOLS];
-static size_t global_symbol_count = 0;
 
 static Section sections[MAX_SECTIONS];
 static size_t section_count = 0;
@@ -67,10 +65,15 @@ Section* find_section(const char *name) {
 }
 
 Symbol* find_symbol(const char *name) {
-    for (size_t i = 0; i < global_symbol_count; i++) {
-        if (strcmp(global_symbols[i].name, name) == 0)
-            return &global_symbols[i];
-    }
+	for(size_t i = 0; i < object_file_count; i++) {
+		ObjectFile* of = &object_files[i];
+		for(size_t i = 0; i < of ->symbol_count; i++) {
+			Symbol* sym = &of->symbols[i];
+			if(sym->global && strcmp(sym->name, name) == 0) {
+				return sym;
+			}
+		}
+	}
     return NULL;
 }
 
@@ -147,12 +150,14 @@ static void read_exact(FILE *f, void *buf, size_t sz) {
     }
 }
 
-void load_sections(const LinkerOptions *opts, FILE* f, ObjectFile *of) {
-    static struct {
+void load_sections(const LinkerOptions *opts, FILE *f, ObjectFile *of) {
+    typedef struct {
         char name[64];
         uint32_t addr;
-    } cursors[MAX_SECTIONS];
-    static int cursor_count = 0;
+    } Cursor;
+
+    Cursor cursors[MAX_SECTIONS];
+    int cursor_count = 0;
 
     uint32_t sec_count;
     read_exact(f, &sec_count, sizeof(sec_count));
@@ -166,17 +171,21 @@ void load_sections(const LinkerOptions *opts, FILE* f, ObjectFile *of) {
         read_exact(f, &size64, sizeof(size64));
         size_t size = (size_t)size64;
 
-        unsigned char *data = size ? malloc(size) : NULL;
-        if (size && !data) {
-            fprintf(stderr, "Error: malloc failed for section %s", name);
-			exit(1);
+        unsigned char *data = NULL;
+        if (size) {
+            data = malloc(size);
+            if (!data) {
+                fprintf(stderr, "Error: malloc failed for section %s\n", name);
+                exit(1);
+            }
+            read_exact(f, data, size);
         }
-        if (size) read_exact(f, data, size);
 
         uint32_t addr = 0;
         int found = 0;
+
         for (int p = 0; p < opts->placement_count; p++) {
-            if (!strcmp(opts->placements[p].section_name, name)) {
+            if (strcmp(opts->placements[p].section_name, name) == 0) {
                 addr = opts->placements[p].address;
                 found = 1;
                 break;
@@ -184,174 +193,109 @@ void load_sections(const LinkerOptions *opts, FILE* f, ObjectFile *of) {
         }
         if (!found) {
             for (int c = 0; c < cursor_count; c++) {
-                if (!strcmp(cursors[c].name, name)) {
+                if (strcmp(cursors[c].name, name) == 0) {
                     addr = cursors[c].addr;
                     found = 1;
                     break;
                 }
             }
         }
-        if (!found) {
+        if (!found && cursor_count < MAX_SECTIONS) {
             strncpy(cursors[cursor_count].name, name, 63);
+            cursors[cursor_count].name[63] = '\0';
             cursors[cursor_count].addr = 0;
-            addr = 0;
             cursor_count++;
         }
 
         Section *s = find_section(name);
-        size_t global_idx, local_off = 0;
+        size_t local_off = 0;
+        size_t global_idx;
 
         if (s) {
             local_off = s->size;
             unsigned char *new_data = realloc(s->data, s->size + size);
             if (!new_data) {
                 fprintf(stderr, "Error: realloc failed for section %s\n", name);
-				exit(1);
+                exit(1);
             }
             s->data = new_data;
             if (size) memcpy(s->data + local_off, data, size);
             s->size += size;
             s->capacity = s->size;
             free(data);
-            global_idx = s - sections;
         } else {
             if (section_count >= MAX_SECTIONS) {
                 fprintf(stderr, "Error: Too many sections\n");
-				exit(1);
+                exit(1);
             }
             s = &sections[section_count++];
-            memset(s, 0, sizeof(Section));
+            memset(s, 0, sizeof(*s));
             strncpy(s->name, name, 63);
+            s->name[63] = '\0';
             s->size = s->capacity = size;
             s->data = data;
             s->base = addr;
-            global_idx = s - sections;
         }
+        global_idx = (size_t)(s - sections);
 
         for (int c = 0; c < cursor_count; c++) {
-            if (!strcmp(cursors[c].name, name)) {
+            if (strcmp(cursors[c].name, name) == 0) {
                 cursors[c].addr = s->base + s->size;
                 break;
             }
         }
 
         if (of->section_count >= MAX_SECTIONS_PER_OBJECT) {
-            fprintf(stderr, "Error: too many sections\n");
-            fclose(f);
-			exit(1);
+            fprintf(stderr, "Error: too many sections in object\n");
+            exit(1);
         }
-
         of->section_global_index[of->section_count] = global_idx;
         of->section_offset_in_global[of->section_count++] = local_off;
     }
 }
 
-void load_symbols(FILE* f, ObjectFile *of) {
+void load_symbols(FILE *f, ObjectFile *of) {
     uint32_t sym_count;
     read_exact(f, &sym_count, sizeof(sym_count));
+
     if (sym_count > MAX_SYMBOLS) {
-        fprintf(stderr, "Error: Too many symbols\n");
+        fprintf(stderr, "Error: Too many symbols (%u > %u)\n", sym_count, MAX_SYMBOLS);
         exit(1);
     }
 
     for (uint32_t i = 0; i < sym_count; i++) {
-        Symbol temp;
-        memset(&temp, 0, sizeof(Symbol));
-
-        uint32_t name_len;
-        read_exact(f, &name_len, sizeof(name_len));
-        temp.name = malloc(name_len + 1);
-        read_exact(f, temp.name, name_len);
-        temp.name[name_len] = '\0';
-
-        uint64_t off;
-        read_exact(f, &off, sizeof(off));
-        temp.offset = (size_t)off;
-
-        uint32_t sec_len;
-        read_exact(f, &sec_len, sizeof(sec_len));
-        if (sec_len > 0) {
-            temp.section = malloc(sec_len + 1);
-            read_exact(f, temp.section, sec_len);
-            temp.section[sec_len] = '\0';
-        }
-
-        uint8_t b[4];
-        read_exact(f, b, 4);
-        temp.defined = !!b[0];
-        temp.global = !!b[1];
-        temp.external = !!b[2];
-        temp.relocatable = !!b[3];
-
-        if (temp.relocatable && temp.section) {
-            for (size_t si = 0; si < of->section_count; si++) {
-                Section *s = &sections[of->section_global_index[si]];
-                if (!strcmp(s->name, temp.section)) {
-                    temp.offset += s->base;
-                    break;
-                }
-            }
-        }
-
         if (of->symbol_count >= MAX_SYMBOLS) {
             fprintf(stderr, "Error: too many local symbols\n");
             exit(1);
         }
 
         Symbol *dst = &of->symbols[of->symbol_count++];
-        memset(dst, 0, sizeof(Symbol));
-        dst->name = strdup(temp.name);
-        dst->offset = temp.offset;
-        dst->section = temp.section ? strdup(temp.section) : NULL;
-        dst->defined = temp.defined;
-        dst->global = temp.global;
-        dst->external = temp.external;
-        dst->relocatable = temp.relocatable;
+        memset(dst, 0, sizeof(*dst));
 
-        if (temp.global) {
-            Symbol *existing = find_symbol(temp.name);
+        uint32_t name_len;
+        read_exact(f, &name_len, sizeof(name_len));
+        dst->name = malloc(name_len + 1);
+        read_exact(f, dst->name, name_len);
+        dst->name[name_len] = '\0';
 
-            if (existing) {
-                if (existing->defined && temp.defined) {
-                    fprintf(stderr, "Linker error: multiple definition of symbol '%s'\n", temp.name);
-                    free(temp.name);
-                    if (temp.section) free(temp.section);
-                    exit(1);
-                }
+        uint64_t off;
+        read_exact(f, &off, sizeof(off));
+        dst->offset = (size_t)off;
 
-                if (temp.defined) {
-                    existing->offset = temp.offset;
-                    if (existing->section) free(existing->section);
-                    existing->section = temp.section ? strdup(temp.section) : NULL;
-                    existing->defined = true;
-                }
-
-                existing->external    |= temp.external;
-                existing->relocatable |= temp.relocatable;
-                existing->global      |= temp.global;
-
-            } else {
-                if (global_symbol_count >= MAX_SYMBOLS) {
-                    fprintf(stderr, "Error: global symbol table full\n");
-                    free(temp.name);
-                    if (temp.section) free(temp.section);
-                    exit(1);
-                }
-
-                Symbol *new_sym = &global_symbols[global_symbol_count++];
-                memset(new_sym, 0, sizeof(Symbol));
-                new_sym->name        = strdup(temp.name);
-                new_sym->offset      = temp.offset;
-                new_sym->section     = temp.section ? strdup(temp.section) : NULL;
-                new_sym->defined     = temp.defined;
-                new_sym->global      = temp.global;
-                new_sym->external    = temp.external;
-                new_sym->relocatable = temp.relocatable;
-            }
+        uint32_t sec_len;
+        read_exact(f, &sec_len, sizeof(sec_len));
+        if (sec_len > 0) {
+            dst->section = malloc(sec_len + 1);
+            read_exact(f, dst->section, sec_len);
+            dst->section[sec_len] = '\0';
         }
 
-        free(temp.name);
-        if (temp.section) free(temp.section);
+        uint8_t b[4];
+        read_exact(f, b, sizeof(b));
+        dst->defined = !!b[0];
+        dst->global = !!b[1];
+        dst->external = !!b[2];
+        dst->relocatable = !!b[3];
     }
 }
 
@@ -427,7 +371,25 @@ void load_input_files(const LinkerOptions *opts) {
 	}
 }
 
-void resolve_external_symbols() {
+void resolve_symbols() {
+    for (size_t fi = 0; fi < object_file_count; fi++) {
+        ObjectFile *of = &object_files[fi];
+
+        for (size_t si = 0; si < of->symbol_count; si++) {
+            Symbol *sym = &of->symbols[si];
+
+            if (sym->relocatable && sym->section) {
+                for (size_t sgi = 0; sgi < of->section_count; sgi++) {
+                    Section *s = &sections[of->section_global_index[sgi]];
+                    if (!strcmp(s->name, sym->section)) {
+                        sym->offset += s->base + of->section_offset_in_global[sgi];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     for (size_t fi = 0; fi < object_file_count; fi++) {
         ObjectFile *of = &object_files[fi];
 
@@ -513,29 +475,6 @@ void resolve_relocations() {
 			}
 		}
 	}
-}
-
-void merge_sections() {
-    for (size_t i = 0; i < section_count; i++) {
-        Section *a = &sections[i];
-
-        for (size_t j = i + 1; j < section_count; ) {
-            Section *b = &sections[j];
-
-            if (strcmp(a->name, b->name) == 0) {
-                a->data = realloc(a->data, a->size + b->size);
-                memcpy(a->data + a->size, b->data, b->size);
-                a->size += b->size;
-
-                for (size_t k = j + 1; k < section_count; k++) {
-                    sections[k - 1] = sections[k];
-                }
-                section_count--;
-            } else {
-                j++;
-            }
-        }
-    }
 }
 
 void assign_section_bases(const LinkerOptions *opts) {
@@ -655,10 +594,9 @@ int main(int argc, char **argv) {
 	}
 
 	load_input_files(&opts);
-	resolve_external_symbols();
-	resolve_relocations();
-	merge_sections();
 	assign_section_bases(&opts);
+	resolve_symbols();
+	resolve_relocations();
 	write_output(&opts);
 
 	return 0;

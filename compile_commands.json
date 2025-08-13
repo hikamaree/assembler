@@ -5,6 +5,7 @@
       "-std=c11",
       "-Wall",
       "-Wextra",
+      "-Wno-unused-function",
       "-D_POSIX_C_SOURCE=200809L",
       "-I./src",
       "-c",
@@ -22,6 +23,7 @@
       "-std=c11",
       "-Wall",
       "-Wextra",
+      "-Wno-unused-function",
       "-D_POSIX_C_SOURCE=200809L",
       "-I./src",
       "-c",
@@ -39,6 +41,7 @@
       "-std=c11",
       "-Wall",
       "-Wextra",
+      "-Wno-unused-function",
       "-D_POSIX_C_SOURCE=200809L",
       "-I./src",
       "-c",
@@ -56,6 +59,7 @@
       "-std=c11",
       "-Wall",
       "-Wextra",
+      "-Wno-unused-function",
       "-D_POSIX_C_SOURCE=200809L",
       "-I./src",
       "-c",
@@ -66,5 +70,23 @@
     "directory": "/home/marko/repos/ss/assembler",
     "file": "/home/marko/repos/ss/assembler/src/linker.c",
     "output": "/home/marko/repos/ss/assembler/build/linker.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wno-unused-function",
+      "-D_POSIX_C_SOURCE=200809L",
+      "-I./src",
+      "-c",
+      "-o",
+      "build/emulator.o",
+      "src/emulator.c"
+    ],
+    "directory": "/home/marko/repos/ss/assembler",
+    "file": "/home/marko/repos/ss/assembler/src/emulator.c",
+    "output": "/home/marko/repos/ss/assembler/build/emulator.o"
   }
 ]

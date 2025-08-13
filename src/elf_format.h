@@ -11,7 +11,7 @@
 
 typedef struct {
     char *name;
-    size_t offset;
+    int offset;
     char *section;
     bool defined;
     bool global;
