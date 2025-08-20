@@ -25,13 +25,12 @@ value8:
 .skip 100
 
 value9:
-.word 0xfffff000, 0x169, 0xfffff000
+.word d, 0x169, d
 
-.equ t, c - a       # 0x3000
 .equ c, a + b       # 0x4000
+.equ t, c - a       # 0x3000
 .equ b, a + 0x2000  # 0x3000
-#.equ d, g - a - 1   # 0xfffff000
-.equ d, 0xfffff000
+.equ d, g - a - 1   # 0xfffff000
 .equ a, 0x1000      # 0x1000
 .equ g, 1           # 1
 

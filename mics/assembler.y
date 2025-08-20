@@ -81,7 +81,7 @@ int yylex(void);
 %token COMMA LBRACKET RBRACKET PLUS MINUS DOLLAR
 
 %type<operand_ptr> operand
-%type<expression_ptr> expression
+%type<expression_ptr> expression term
 
 %type <str_list> symbols words
 %type <void> instruction line label_definition directive program lines
@@ -98,11 +98,11 @@ lines:
 ;
 
 line:
-    label_definition                { /* samo labela */ }
-  | instruction                     { /* samo instrukcija */ }
-  | directive                       { /* samo direktiva */ }
-  | label_definition instruction    { /* labela + instrukcija u istoj liniji */ }
-  | label_definition directive      { /* labela + direktiva u istoj liniji */ }
+	label_definition { /* samo labela */ }
+	| instruction { /* samo instrukcija */ }
+	| directive { /* samo direktiva */ }
+	| label_definition instruction { /* labela + instrukcija u istoj liniji */ }
+	| label_definition directive { /* labela + direktiva u istoj liniji */ }
 ;
 
 label_definition:
@@ -110,129 +110,45 @@ label_definition:
 ;
 
 instruction:
-      HALT                  { assembler_handle_halt(); }
-    | INT                   { assembler_handle_int(); }
-    | IRET                  { assembler_handle_iret(); }
-    | CALL operand          { assembler_handle_call($2); free($2); }
-    | RET                   { assembler_handle_ret(); }
-    | JMP operand           { assembler_handle_jmp($2); free($2); }
-    | BEQ operand COMMA operand COMMA operand {
-          assembler_handle_beq($2, $4, $6);
-          free($2); free($4); free($6);
-      }
-    | BNE operand COMMA operand COMMA operand {
-          assembler_handle_bne($2, $4, $6);
-          free($2); free($4); free($6);
-      }
-    | BGT operand COMMA operand COMMA operand {
-          assembler_handle_bgt($2, $4, $6);
-          free($2); free($4); free($6);
-      }
-    | PUSH operand {
-          assembler_handle_push($2);
-          free($2);
-      }
-    | POP operand {
-          assembler_handle_pop($2);
-          free($2);
-      }
-    | XCHG operand COMMA operand {
-          assembler_handle_xchg($2, $4);
-          free($2); free($4);
-      }
-    | ADD operand COMMA operand {
-          assembler_handle_add($2, $4);
-          free($2); free($4);
-      }
-    | SUB operand COMMA operand {
-          assembler_handle_sub($2, $4);
-          free($2); free($4);
-      }
-    | MUL operand COMMA operand {
-          assembler_handle_mul($2, $4);
-          free($2); free($4);
-      }
-    | DIV operand COMMA operand {
-          assembler_handle_div($2, $4);
-          free($2); free($4);
-      }
-    | NOT operand {
-          assembler_handle_not($2);
-          free($2);
-      }
-    | AND operand COMMA operand {
-          assembler_handle_and($2, $4);
-          free($2); free($4);
-      }
-    | OR operand COMMA operand {
-          assembler_handle_or($2, $4);
-          free($2); free($4);
-      }
-    | XOR operand COMMA operand {
-          assembler_handle_xor($2, $4);
-          free($2); free($4);
-      }
-    | SHL operand COMMA operand {
-          assembler_handle_shl($2, $4);
-          free($2); free($4);
-      }
-    | SHR operand COMMA operand {
-          assembler_handle_shr($2, $4);
-          free($2); free($4);
-      }
-    | LD operand COMMA operand {
-          assembler_handle_ld($2, $4);
-          free($2); free($4);
-      }
-    | ST operand COMMA operand {
-          assembler_handle_st($2, $4);
-          free($2); free($4);
-      }
-    | CSRRD operand COMMA operand {
-          assembler_handle_csrrd($2, $4);
-          free($2); free($4);
-      }
-    | CSRWR operand COMMA operand {
-          assembler_handle_csrwr($2, $4);
-          free($2); free($4);
-      }
-;
+    HALT { assembler_handle_halt(); }
+    | INT { assembler_handle_int(); }
+    | IRET { assembler_handle_iret(); }
+    | CALL operand { assembler_handle_call($2); free($2); }
+    | RET { assembler_handle_ret(); }
+    | JMP operand { assembler_handle_jmp($2); free_operand($2); }
+    | BEQ operand COMMA operand COMMA operand { assembler_handle_beq($2, $4, $6); free_operand($2); free_operand($4); free_operand($6); }
+    | BNE operand COMMA operand COMMA operand { assembler_handle_bne($2, $4, $6); free_operand($2); free_operand($4); free_operand($6); }
+    | BGT operand COMMA operand COMMA operand { assembler_handle_bgt($2, $4, $6); free_operand($2); free_operand($4); free_operand($6); }
+    | PUSH operand { assembler_handle_push($2); free_operand($2); }
+    | POP operand { assembler_handle_pop($2); free_operand($2); }
+    | XCHG operand COMMA operand { assembler_handle_xchg($2, $4); free_operand($2); free_operand($4); }
+    | ADD operand COMMA operand { assembler_handle_add($2, $4); free_operand($2); free_operand($4); }
+    | SUB operand COMMA operand { assembler_handle_sub($2, $4); free_operand($2); free_operand($4); }
+    | MUL operand COMMA operand { assembler_handle_mul($2, $4); free_operand($2); free_operand($4); }
+    | DIV operand COMMA operand { assembler_handle_div($2, $4); free_operand($2); free_operand($4); }
+    | NOT operand { assembler_handle_not($2); free_operand($2); }
+    | AND operand COMMA operand { assembler_handle_and($2, $4); free_operand($2); free_operand($4); }
+    | OR operand COMMA operand { assembler_handle_or($2, $4); free_operand($2); free_operand($4); }
+    | XOR operand COMMA operand { assembler_handle_xor($2, $4); free_operand($2); free_operand($4); }
+    | SHL operand COMMA operand { assembler_handle_shl($2, $4); free_operand($2); free_operand($4); }
+    | SHR operand COMMA operand { assembler_handle_shr($2, $4); free_operand($2); free_operand($4); }
+    | LD operand COMMA operand { assembler_handle_ld($2, $4); free_operand($2); free_operand($4); }
+    | ST operand COMMA operand { assembler_handle_st($2, $4); free_operand($2); free_operand($4); }
+    | CSRRD operand COMMA operand { assembler_handle_csrrd($2, $4); free_operand($2); free_operand($4); }
+    | CSRWR operand COMMA operand { assembler_handle_csrwr($2, $4); free_operand($2); free_operand($4); }
+	;
 
 operand:
-      REGISTER {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_REG;
-        $$->reg = parse_register($1);
-        free($1);
-      }
-    | CSR {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_CSR;
-        $$->csr = parse_csr($1);
-        free($1);
-      }
-    | DOLLAR NUMBER {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_LITERAL;
-        $$->literal = $2;
-      }
-    | NUMBER {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_ADDR_LITERAL;
-        $$->literal = $1;
-      }
-    | DOLLAR IDENTIFIER {
-        $$ = malloc(sizeof(Operand));
-        $$->type = OPERAND_SYMBOL;
-        $$->literal = 0;
-        $$->symbol = $2;
-      }
+    REGISTER { $$ = malloc(sizeof(Operand)); $$->type = OPERAND_REG; $$->reg = parse_register($1); free($1); }
+    | CSR { $$ = malloc(sizeof(Operand)); $$->type = OPERAND_CSR; $$->csr = parse_csr($1); free($1); }
+    | DOLLAR NUMBER { $$ = malloc(sizeof(Operand)); $$->type = OPERAND_LITERAL; $$->literal = $2; }
+    | NUMBER { $$ = malloc(sizeof(Operand)); $$->type = OPERAND_ADDR_LITERAL; $$->literal = $1; }
+    | DOLLAR IDENTIFIER { $$ = malloc(sizeof(Operand)); $$->type = OPERAND_SYMBOL; $$->literal = 0; $$->symbol = $2; }
     | IDENTIFIER {
         $$ = malloc(sizeof(Operand));
         $$->type = OPERAND_ADDR_SYMBOL;
         $$->literal = 0;
-        $$->symbol = $1;
-      }
+        $$->symbol = $1; }
     | LBRACKET REGISTER RBRACKET {
     	$$ = malloc(sizeof(Operand));
     	$$->type = OPERAND_MEM;
@@ -241,7 +157,7 @@ operand:
     	$$->mem.offset = 0;
     	$$->mem.offset_symbol = NULL;
 		free($2);
-      }
+    }
     | LBRACKET REGISTER PLUS NUMBER RBRACKET {
 		$$ = malloc(sizeof(Operand));
 		$$->type = OPERAND_MEM;
@@ -250,7 +166,7 @@ operand:
 		$$->mem.offset = $4;
 		$$->mem.offset_symbol = NULL;
 		free($2);
-      }
+    }
     | LBRACKET REGISTER PLUS IDENTIFIER RBRACKET {
 		$$ = malloc(sizeof(Operand));
 		$$->type = OPERAND_MEM;
@@ -259,7 +175,7 @@ operand:
 		$$->mem.offset = 0;
 		$$->mem.offset_symbol = $4;
 		free($2);
-      }
+    }
 	| LBRACKET REGISTER PLUS REGISTER RBRACKET {
     	$$ = malloc(sizeof(Operand));
     	$$->type = OPERAND_MEM;
@@ -267,8 +183,7 @@ operand:
     	$$->mem.index_reg = parse_register($4);
     	$$->mem.offset = 0;
     	$$->mem.offset_symbol = NULL;
-    	free($2);
-    	free($4);
+    	free($2); free($4);
 	}
 	| LBRACKET REGISTER PLUS REGISTER PLUS NUMBER RBRACKET {
     	$$ = malloc(sizeof(Operand));
@@ -276,100 +191,30 @@ operand:
     	$$->mem.base_reg = parse_register($2);
     	$$->mem.index_reg = parse_register($4);
     	$$->mem.offset = $6;
-    	$$->mem.offset_symbol = NULL;
-    	free($2);
-    	free($4);
+		$$->mem.offset_symbol = NULL;
+		free($2); free($4);
 	}
 	| LBRACKET REGISTER PLUS REGISTER PLUS IDENTIFIER RBRACKET {
-    	$$ = malloc(sizeof(Operand));
-    	$$->type = OPERAND_MEM;
-    	$$->mem.base_reg = parse_register($2);
-    	$$->mem.index_reg = parse_register($4);
-    	$$->mem.offset = 0;
-    	$$->mem.offset_symbol = $6;
-    	free($2);
-    	free($4);
+		$$ = malloc(sizeof(Operand));
+		$$->type = OPERAND_MEM;
+		$$->mem.base_reg = parse_register($2);
+		$$->mem.index_reg = parse_register($4);
+		$$->mem.offset = 0;
+		$$->mem.offset_symbol = $6;
+		free($2); free($4);
 	}
 ;
 
 expression:
-	NUMBER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = NONE;
-		$$->op1.literal = $1;
-		$$->op1.type = OPERAND_LITERAL;
-	}
-	| IDENTIFIER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = NONE;
-		$$->op1.symbol = $1;
-		$$->op1.type = OPERAND_SYMBOL;
-	}
-	| NUMBER PLUS NUMBER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = ADDITION;
-		$$->op1.literal = $1;
-		$$->op1.type = OPERAND_LITERAL;
-		$$->op2.literal = $3;
-		$$->op2.type = OPERAND_LITERAL;
-	}
-	| NUMBER PLUS IDENTIFIER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = ADDITION;
-		$$->op1.literal = $1;
-		$$->op1.type = OPERAND_LITERAL;
-		$$->op2.symbol = $3;
-		$$->op2.type = OPERAND_SYMBOL;
-	}
-	| IDENTIFIER PLUS NUMBER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = ADDITION;
-		$$->op1.symbol = $1;
-		$$->op1.type = OPERAND_SYMBOL;
-		$$->op2.literal = $3;
-		$$->op2.type = OPERAND_LITERAL;
-	}
-	| IDENTIFIER PLUS IDENTIFIER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = ADDITION;
-		$$->op1.symbol = $1;
-		$$->op1.type = OPERAND_SYMBOL;
-		$$->op2.symbol = $3;
-		$$->op2.type = OPERAND_SYMBOL;
-	}
-	| NUMBER MINUS NUMBER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = SUBSTRACTION;
-		$$->op1.literal = $1;
-		$$->op1.type = OPERAND_LITERAL;
-		$$->op2.literal = $3;
-		$$->op2.type = OPERAND_LITERAL;
-	}
-	| NUMBER MINUS IDENTIFIER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = SUBSTRACTION;
-		$$->op1.literal = $1;
-		$$->op1.type = OPERAND_LITERAL;
-		$$->op2.symbol = $3;
-		$$->op2.type = OPERAND_SYMBOL;
-	}
-	| IDENTIFIER MINUS NUMBER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = SUBSTRACTION;
-		$$->op1.symbol = $1;
-		$$->op1.type = OPERAND_SYMBOL;
-		$$->op2.literal = $3;
-		$$->op2.type = OPERAND_LITERAL;
-	}
-	| IDENTIFIER MINUS IDENTIFIER {
-		$$ = malloc(sizeof(Expression));
-		$$->operation = SUBSTRACTION;
-		$$->op1.symbol = $1;
-		$$->op1.type = OPERAND_SYMBOL;
-		$$->op2.symbol = $3;
-		$$->op2.type = OPERAND_SYMBOL;
-	}
-;
+	term { $$ = $1; $$->op = OP_ADD; $$->next = NULL; }
+    | expression PLUS term { Expression* e = $1; while (e->next) e = e->next; e->next = $3; $3->op = OP_ADD; $3->next = NULL; $$ = $1; }
+    | expression MINUS term { Expression* e = $1; while (e->next) e = e->next; e->next = $3; $3->op = OP_SUB; $3->next = NULL; $$ = $1; }
+    ;
+
+term:
+	NUMBER { $$ = malloc(sizeof(Expression)); $$->operand.type = OPERAND_LITERAL; $$->operand.literal = $1; $$->next = NULL; }
+    | IDENTIFIER { $$ = malloc(sizeof(Expression)); $$->operand.type = OPERAND_SYMBOL; $$->operand.symbol = $1; $$->next = NULL; }
+    ;
 
 directive:
     SECTION IDENTIFIER { assembler_handle_section($2); free($2); }
@@ -379,7 +224,7 @@ directive:
     | EXTERN symbols { assembler_handle_extern($2); free_string_list($2); }
     | EQU IDENTIFIER COMMA expression { assembler_handle_equ($2, $4); }
     | END { assembler_handle_end(); }
-  	| ASCII STRING { assembler_handle_ascii($2); }
+  	| ASCII STRING { assembler_handle_ascii($2); free($2); }
 ;
 
 symbols:
@@ -388,18 +233,10 @@ symbols:
 ;
 
 words:
-    NUMBER {
-        $$ = create_string_list();
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d", $1);
-        string_list_push_back($$, buf);
-    }
-    | words COMMA NUMBER {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d", $3);
-        string_list_push_back($1, buf);
-        $$ = $1;
-    }
+    NUMBER { $$ = create_string_list(); char buf[32]; snprintf(buf, sizeof(buf), "%d", $1); string_list_push_back($$, buf); }
+	| IDENTIFIER { $$ = create_string_list(); string_list_push_back($$, $1); free($1); }
+    | words COMMA NUMBER { char buf[32]; snprintf(buf, sizeof(buf), "%d", $3); string_list_push_back($1, buf); $$ = $1; }
+    | words COMMA IDENTIFIER { string_list_push_back($1, $3); $$ = $1; free($3); }
 ;
 
 %%

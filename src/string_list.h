@@ -31,14 +31,42 @@ typedef struct Operand {
     };
 } Operand;
 
+static inline void free_operand(Operand* operand) {
+    if (!operand) return;
+
+    switch (operand->type) {
+        case OPERAND_SYMBOL:
+        case OPERAND_ADDR_SYMBOL:
+            if (operand->symbol) {
+                free(operand->symbol);
+                operand->symbol = NULL;
+            }
+            break;
+
+        case OPERAND_MEM:
+            if (operand->mem.offset_symbol) {
+                free(operand->mem.offset_symbol);
+                operand->mem.offset_symbol = NULL;
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    free(operand);
+}
+
+typedef enum {
+    OP_ADD = 1,
+	NONE = 0,
+    OP_SUB = -1
+} Operator;
+
 typedef struct Expression {
-	enum {
-		NONE,
-		ADDITION,
-		SUBSTRACTION
-	} operation;
-	Operand op1;
-	Operand op2;
+    Operand operand;
+    Operator op;
+    struct Expression* next;
 } Expression;
 
 typedef struct {

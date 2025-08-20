@@ -1,0 +1,44 @@
+#sections
+.isr
+81 E0 1F FC 81 E0 2F FC 81 E0 3F FC 91 20 00 00 
+92 3F 00 00 50 32 30 00 92 33 00 00 82 F0 30 00 
+91 10 00 01 50 21 20 00 92 1F 00 00 3A F1 20 00 
+92 1F 00 00 82 F0 10 00 92 1F 00 00 82 F0 10 00 
+93 3E 00 04 93 2E 00 04 93 1E 00 04 93 FE 00 04 
+74 69 6D 65 72 20 69 6E 74 65 72 72 75 70 74 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+
+#symbols
+NUM  VALUE      TYPE   BIND   NAME
+0    0x0        NOREL  LOC    terminal_out
+1    0x0        REL    GLOB   isr_timer
+2    0x10       REL    LOC    loop
+3    0x60       NOREL  LOC    SYM_message_start
+4    0x64       NOREL  LOC    SYM_terminal_out
+5    0x68       NOREL  LOC    SYM_message_len
+6    0x6C       NOREL  LOC    SYM_loop
+7    0x70       NOREL  LOC    SYM_line_feed
+8    0x74       NOREL  LOC    SYM_carriage_return
+9    0x50       REL    LOC    message_start
+10   0x60       REL    LOC    message_end
+11   0xA        NOREL  LOC    line_feed
+12   0xD        NOREL  LOC    carriage_return
+13   0x10       NOREL  LOC    message_len
+
+#relocations
+NUM  OFFSET     TYPE     SYMBOL               SECTION
+0    0x60       ABS      message_start        isr
+1    0x12       PC_REL   SYM_message_start    isr
+2    0x64       ABS      terminal_out         isr
+3    0x1E       PC_REL   SYM_terminal_out     isr
+4    0x68       ABS      message_len          isr
+5    0x2A       PC_REL   SYM_message_len      isr
+6    0x6C       ABS      loop                 isr
+7    0x2E       PC_REL   SYM_loop             isr
+8    0x70       ABS      line_feed            isr
+9    0x32       PC_REL   SYM_line_feed        isr
+10   0x36       PC_REL   SYM_terminal_out     isr
+11   0x74       ABS      carriage_return      isr
+12   0x3A       PC_REL   SYM_carriage_return  isr
+13   0x3E       PC_REL   SYM_terminal_out     isr

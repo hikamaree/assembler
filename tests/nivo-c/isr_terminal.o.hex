@@ -1,0 +1,31 @@
+#sections
+.isr
+81 E0 1F FC 81 E0 2F FC 92 1F 00 00 92 11 00 00 
+92 2F 00 00 50 12 10 00 82 F0 10 00 92 1F 00 00 
+92 11 00 00 91 20 00 01 50 12 10 00 82 F0 10 00 
+93 2E 00 04 93 1E 00 04 93 FE 00 04 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 
+
+#symbols
+NUM  VALUE      TYPE   BIND   NAME
+0    0x0        NOREL  LOC    my_counter
+1    0xFFFFFF00 NOREL  GLOB   terminal_out
+2    0xFFFFFF04 NOREL  GLOB   terminal_in
+3    0x0        REL    GLOB   isr_terminal
+4    0x3C       NOREL  LOC    SYM_terminal_in
+5    0x40       NOREL  LOC    SYM_character_offset
+6    0x44       NOREL  LOC    SYM_terminal_out
+7    0x48       NOREL  LOC    SYM_my_counter
+8    0x2        NOREL  LOC    character_offset
+
+#relocations
+NUM  OFFSET     TYPE     SYMBOL               SECTION
+0    0x3C       ABS      terminal_in          isr
+1    0xA        PC_REL   SYM_terminal_in      isr
+2    0x40       ABS      character_offset     isr
+3    0x12       PC_REL   SYM_character_offset isr
+4    0x44       ABS      terminal_out         isr
+5    0x1A       PC_REL   SYM_terminal_out     isr
+6    0x48       ABS      my_counter           isr
+7    0x1E       PC_REL   SYM_my_counter       isr
+8    0x2E       PC_REL   SYM_my_counter       isr

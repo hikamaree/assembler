@@ -27,15 +27,15 @@ EMULATOR_OBJ := $(BUILD_DIR)/emulator.o
 
 all: $(ASSEMBLER_TARGET) $(LINKER_TARGET) $(EMULATOR_TARGET)
 
-# Bison parser generation
-$(BISON_C) $(BISON_H): $(BISON_SRC)
-	@mkdir -p $(BUILD_DIR)
-	bison -d -o $(BISON_C) $(BISON_SRC)
-
 # Flex lexer generation
 $(FLEX_C): $(FLEX_SRC) $(BISON_H)
 	@mkdir -p $(BUILD_DIR)
 	flex -o$(FLEX_C) $(FLEX_SRC)
+
+# Bison parser generation
+$(BISON_C) $(BISON_H): $(BISON_SRC)
+	@mkdir -p $(BUILD_DIR)
+	bison -d -o $(BISON_C) $(BISON_SRC)
 
 # Compile generated Bison parser
 $(BUILD_DIR)/assembler.tab.o: $(BISON_C)

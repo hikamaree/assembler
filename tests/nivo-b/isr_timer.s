@@ -5,5 +5,6 @@
 .global isr_timer
 isr_timer:
     ret
+.skip 20
 
 .end

@@ -371,7 +371,69 @@ void load_input_files(const LinkerOptions *opts) {
 	}
 }
 
-void resolve_symbols() {
+void assign_section_bases(const LinkerOptions *opts) {
+	if(opts->relocatable_output) return;
+
+	bool assigned[MAX_SECTIONS] = { false };
+
+	for (int i = 0; i < opts->placement_count; i++) {
+		const char *placement_name = opts->placements[i].section_name;
+
+		for (size_t j = 0; j < section_count; j++) {
+			Section *s = &sections[j];
+			if (strcmp(s->name, placement_name) == 0) {
+				assigned[j] = true;
+			}
+		}
+	}
+
+	for (size_t i = 0; i < section_count; i++) {
+		if (!assigned[i]) continue;
+
+		for (size_t j = i + 1; j < section_count; j++) {
+			if (!assigned[j]) continue;
+			Section *a = &sections[i];
+			Section *b = &sections[j];
+			size_t a_end = (size_t)a->base + a->size;
+			size_t b_end = (size_t)b->base + b->size;
+			if ((a->base < b_end && a_end > b->base)) {
+				fprintf(stderr, "Linker error: sections '%s' and '%s' overlap (0x%lX ~ 0x%lX)\n",
+						a->name, b->name,
+						(unsigned long)((a->base < b->base) ? a->base : b->base),
+						(unsigned long)((a_end > b_end) ? a_end : b_end));
+				exit(1);
+			}
+		}
+	}
+
+	size_t next_base = 0;
+	for (size_t i = 0; i < section_count; i++) {
+		if (assigned[i]) continue;
+		Section *s = &sections[i];
+		while (1) {
+			bool conflict = false;
+			for (size_t j = 0; j < section_count; j++) {
+				if (i == j) continue;
+				Section *other = &sections[j];
+				if (!assigned[j] && other->base == 0) continue;
+				size_t o_start = other->base;
+				size_t o_end = (size_t)other->base + other->size;
+				if (!(next_base + s->size <= o_start || next_base >= o_end)) {
+					next_base = o_end;
+					conflict = true;
+					break;
+				}
+			}
+
+			if (!conflict) break;
+		}
+		s->base = next_base;
+		assigned[i] = true;
+		next_base += s->size;
+	}
+}
+
+void resolve_symbols(LinkerOptions* opts) {
     for (size_t fi = 0; fi < object_file_count; fi++) {
         ObjectFile *of = &object_files[fi];
 
@@ -379,43 +441,68 @@ void resolve_symbols() {
             Symbol *sym = &of->symbols[si];
 
             if (sym->relocatable && sym->section) {
+				printf("Old sym %s = %X\n", sym->name, sym->offset);
                 for (size_t sgi = 0; sgi < of->section_count; sgi++) {
                     Section *s = &sections[of->section_global_index[sgi]];
-                    if (!strcmp(s->name, sym->section)) {
-                        sym->offset += s->base + of->section_offset_in_global[sgi];
-                        break;
-                    }
-                }
-            }
-        }
-    }
+					if (!strcmp(s->name, sym->section)) {
+						sym->offset += s->base + of->section_offset_in_global[sgi];
+						break;
+					}
+				}
+				printf("New sym %s = %X\n", sym->name, sym->offset);
+			}
+		}
+	}
 
-    for (size_t fi = 0; fi < object_file_count; fi++) {
-        ObjectFile *of = &object_files[fi];
+	for (size_t fi = 0; fi < object_file_count; fi++) {
+		ObjectFile *of = &object_files[fi];
 
-        for (size_t si = 0; si < of->symbol_count; si++) {
-            Symbol *sym = &of->symbols[si];
+		for (size_t si = 0; si < of->symbol_count; si++) {
+			Symbol *sym = &of->symbols[si];
 
-            if (sym->external && !sym->defined) {
-                Symbol *resolved = find_symbol(sym->name);
+			if (sym->external && !sym->defined) {
+				Symbol *resolved = find_symbol(sym->name);
 
-                if (!resolved || !resolved->defined) {
-                    fprintf(stderr, "Linker error: undefined external symbol '%s'\n", sym->name);
-                    exit(1);
-                }
+				if (!resolved || !resolved->defined) {
+					if(opts->relocatable_output) continue;
+					fprintf(stderr, "Linker error: undefined external symbol '%s'\n", sym->name);
+					exit(1);
+				}
 
-                sym->offset = resolved->offset;
-                if (sym->section) {
-                    free(sym->section);
-                }
-                sym->section = resolved->section ? strdup(resolved->section) : NULL;
-                sym->defined = true;
-            }
-        }
-    }
+				sym->offset = resolved->offset;
+				if (sym->section) {
+					free(sym->section);
+				}
+				sym->section = resolved->section ? strdup(resolved->section) : NULL;
+				sym->defined = true;
+			}
+		}
+	}
 }
 
-void resolve_relocations() {
+void resolve_relocations(LinkerOptions* opts) {
+	for (size_t of_i = 0; of_i < object_file_count; of_i++) {
+		ObjectFile *of = &object_files[of_i];
+
+		for (size_t ri = 0; ri < of->reloc_count; ri++) {
+			Relocation *rel = &of->relocations[ri];
+			if (!rel->section) {
+				fprintf(stderr, "Error: Relocation %zu in object %zu has invalid section\n", ri, of_i);
+				exit(1);
+			}
+
+			Section *sec = rel->section;
+			for (size_t i = 0; i < of->section_count; i++) {
+				if (&sections[of->section_global_index[i]] == sec) {
+					rel->offset += of->section_offset_in_global[i];
+					break;
+				}
+			}
+		}
+	}
+
+	if(opts->relocatable_output) return;
+
 	for (size_t of_i = 0; of_i < object_file_count; of_i++) {
 		ObjectFile *of = &object_files[of_i];
 
@@ -435,6 +522,7 @@ void resolve_relocations() {
 			}
 
 			if (!target || !target->defined) {
+				if (target->external && opts->relocatable_output) continue;
 				fprintf(stderr, "Error: Undefined symbol in relocation: %s\n", rel->symbol);
 				exit(1);
 			}
@@ -448,7 +536,7 @@ void resolve_relocations() {
 				}
 			}
 
-			size_t offset = rel->offset + section_local_offset;
+			size_t offset = rel->offset;
 			if (offset + 4 > sec->size) {
 				fprintf(stderr, "Error: Relocation offset out of bounds in section %s\n", sec->name);
 				exit(1);
@@ -477,109 +565,175 @@ void resolve_relocations() {
 	}
 }
 
-void assign_section_bases(const LinkerOptions *opts) {
-    bool assigned[MAX_SECTIONS] = { false };
-
-    for (int i = 0; i < opts->placement_count; i++) {
-        const char *placement_name = opts->placements[i].section_name;
-
-        for (size_t j = 0; j < section_count; j++) {
-            Section *s = &sections[j];
-            if (strcmp(s->name, placement_name) == 0) {
-                assigned[j] = true;
-            }
-        }
-    }
-
-    for (size_t i = 0; i < section_count; i++) {
-        if (!assigned[i]) continue;
-
-        for (size_t j = i + 1; j < section_count; j++) {
-            if (!assigned[j]) continue;
-            Section *a = &sections[i];
-            Section *b = &sections[j];
-            size_t a_end = (size_t)a->base + a->size;
-            size_t b_end = (size_t)b->base + b->size;
-            if ((a->base < b_end && a_end > b->base)) {
-                fprintf(stderr, "Linker error: sections '%s' and '%s' overlap (0x%lX ~ 0x%lX)\n",
-                        a->name, b->name,
-                        (unsigned long)((a->base < b->base) ? a->base : b->base),
-                        (unsigned long)((a_end > b_end) ? a_end : b_end));
-                exit(1);
-            }
-        }
-    }
-
-    size_t next_base = 0;
-    for (size_t i = 0; i < section_count; i++) {
-        if (assigned[i]) continue;
-        Section *s = &sections[i];
-        while (1) {
-            bool conflict = false;
-            for (size_t j = 0; j < section_count; j++) {
-                if (i == j) continue;
-                Section *other = &sections[j];
-                if (!assigned[j] && other->base == 0) continue;
-                size_t o_start = other->base;
-                size_t o_end = (size_t)other->base + other->size;
-                if (!(next_base + s->size <= o_start || next_base >= o_end)) {
-                    next_base = o_end;
-                    conflict = true;
-                    break;
-                }
-            }
-
-            if (!conflict) break;
-        }
-        s->base = next_base;
-        assigned[i] = true;
-        next_base += s->size;
-    }
+static void write_exact(FILE *f, const void *buf, size_t sz) {
+	if (fwrite(buf, 1, sz, f) != sz) {
+		fprintf(stderr, "I/O write error\n");
+		exit(EXIT_FAILURE);
+	}
 }
 
-void write_output(LinkerOptions *opts) {
-	FILE *f = fopen(opts->output_filename, opts->hex_output ? "w" : "wb");
+void write_relocatable_output_bin(const char* filename) {
+	FILE *f = fopen(filename, "w");
 	if (!f) {
-		fprintf(stderr, "Error: Cannot open output file %s\n", opts->output_filename);
+		fprintf(stderr, "Error opening text output file '%s'\n", filename);
+		exit(EXIT_FAILURE);
+	}
+
+	uint32_t sc = (uint32_t)section_count;
+	write_exact(f, &sc, sizeof(sc));
+	for (uint32_t i = 0; i < sc; i++) {
+		Section *sec = &sections[i];
+		write_exact(f, sec->name, 64);
+		uint64_t sz = (uint64_t)sec->size;
+		write_exact(f, &sz, sizeof(sz));
+		write_exact(f, sec->data, sec->size);
+	}
+
+	uint32_t symc = 0;
+	for(size_t i = 0; i < object_file_count; i++) {
+		symc += object_files[i].symbol_count;
+	}
+	fwrite(&symc, sizeof(symc), 1, f);
+
+	for(size_t i = 0; i < object_file_count; i++) {
+		ObjectFile* of = &object_files[i];
+		uint32_t symc = of->symbol_count;
+		for (uint32_t i = 0; i < symc; i++) {
+			Symbol *sym = &of->symbols[i];
+			uint32_t name_len = (uint32_t)strlen(sym->name);
+			write_exact(f, &name_len, sizeof(name_len));
+			write_exact(f, sym->name, name_len);
+
+			uint64_t offset = (uint64_t)sym->offset;
+			write_exact(f, &offset, sizeof(offset));
+
+			if (sym->section) {
+				uint32_t section_len = (uint32_t)strlen(sym->section);
+				write_exact(f, &section_len, sizeof(section_len));
+				write_exact(f, sym->section, section_len);
+			} else {
+				uint32_t section_len = 0;
+				write_exact(f, &section_len, sizeof(section_len));
+			}
+
+			uint8_t defined = sym->defined ? 1 : 0;
+			uint8_t global = sym->global ? 1 : 0;
+			uint8_t external = sym->external ? 1 : 0;
+			uint8_t relocatable = sym->relocatable ? 1 : 0;
+			write_exact(f, &defined, sizeof(defined));
+			write_exact(f, &global, sizeof(global));
+			write_exact(f, &external, sizeof(external));
+			write_exact(f, &relocatable, sizeof(relocatable));
+		}
+	}
+
+	for(size_t i = 0; i < object_file_count; i++) {
+		ObjectFile* of = &object_files[i];
+		uint32_t rc = (uint32_t)of->reloc_count;
+		fwrite(&rc, sizeof(rc), 1, f);
+		for (uint32_t i = 0; i < rc; i++) {
+			Relocation *rel = &of->relocations[i];
+
+			uint32_t sec_len = (uint32_t)strlen(rel->section->name);
+			write_exact(f, &sec_len, sizeof(sec_len));
+			write_exact(f, rel->section->name, sec_len);
+
+			uint64_t offset = (uint64_t)rel->offset;
+			write_exact(f, &offset, sizeof(offset));
+
+			uint32_t sym_len = (uint32_t)strlen(rel->symbol);
+			write_exact(f, &sym_len, sizeof(sym_len));
+			write_exact(f, rel->symbol, sym_len);
+
+			uint32_t type = (uint32_t)rel->type;
+			write_exact(f, &type, sizeof(type));
+		}
+	}
+}
+
+void write_relocatable_output_text(const char* filename) {
+	FILE *f = fopen(filename, "w");
+	if (!f) {
+		fprintf(stderr, "Error opening text output file '%s'\n", filename);
+		exit(EXIT_FAILURE);
+	}
+
+	fprintf(f, "#sections\n");
+	for (size_t i = 0; i < section_count; i++) {
+		Section *sec = &sections[i];
+		fprintf(f, ".%s\n", sec->name);
+		for (uint32_t j = 0; j < sec->size; j++) {
+			fprintf(f, "%02X ", sec->data[j]);
+			if ((j + 1) % 16 == 0) fprintf(f, "\n");
+		}
+		if (sec->size % 16 != 0) fprintf(f, "\n");
+	}
+
+	fprintf(f, "\n#symbols\n");
+	fprintf(f, "%-4s %-10s %-6s %-6s %s\n", "NUM", "VALUE", "TYPE", "BIND", "NAME");
+
+	size_t sym_index = 0;
+	for (size_t ofi = 0; ofi < object_file_count; ofi++) {
+		ObjectFile *of = &object_files[ofi];
+		for (size_t i = 0; i < of->symbol_count; i++, sym_index++) {
+			Symbol *sym = &of->symbols[i];
+			fprintf(f, "%-4zu 0x%-8X %-6s %-6s %s\n", sym_index, sym->offset,
+					sym->relocatable ? "REL" : "NOREL", sym->global ? "GLOB" : "LOC", sym->name);
+		}
+	}
+
+	fprintf(f, "\n#relocations\n");
+	fprintf(f, "%-4s %-10s %-8s %-20s %s\n", "NUM", "OFFSET", "TYPE", "SYMBOL", "SECTION");
+
+	size_t rel_index = 0;
+	for (size_t ofi = 0; ofi < object_file_count; ofi++) {
+		ObjectFile *of = &object_files[ofi];
+		for (size_t i = 0; i < of->reloc_count; i++, rel_index++) {
+			Relocation *rel = &of->relocations[i];
+			fprintf(f, "%-4zu 0x%-8zX %-8s %-20s %s\n", rel_index, rel->offset,
+					rel->type == RELOC_ABS ? "ABS" : "PC_REL", rel->symbol, rel->section->name);
+		}
+	}
+
+	fclose(f);
+}
+
+void write_output(const char* filename) {
+	FILE *f = fopen(filename, "w");
+	if (!f) {
+		fprintf(stderr, "Error: Cannot open output file %s\n", filename);
 		exit(1);
 	}
 
-	if (opts->hex_output) {
-		Section* sorted[MAX_SECTIONS];
-		size_t sorted_count = section_count;
-		for (size_t i = 0; i < section_count; i++) {
-			sorted[i] = &sections[i];
+	Section* sorted[MAX_SECTIONS];
+	size_t sorted_count = section_count;
+	for (size_t i = 0; i < section_count; i++) {
+		sorted[i] = &sections[i];
+	}
+	for (size_t i = 1; i < sorted_count; i++) {
+		Section* key = sorted[i];
+		size_t j = i;
+		while (j > 0 && sorted[j - 1]->base > key->base) {
+			sorted[j] = sorted[j - 1];
+			j--;
 		}
-		for (size_t i = 1; i < sorted_count; i++) {
-			Section* key = sorted[i];
-			size_t j = i;
-			while (j > 0 && sorted[j - 1]->base > key->base) {
-				sorted[j] = sorted[j - 1];
-				j--;
-			}
-			sorted[j] = key;
-		}
+		sorted[j] = key;
+	}
 
-		for (size_t si = 0; si < sorted_count; si++) {
-			Section *sec = sorted[si];
-			uint32_t base_addr = (uint32_t)sec->base;
-			for (size_t j = 0; j < sec->size; j += 8) {
-				fprintf(f, "%08X: ", base_addr + (uint32_t)j);
-				size_t line_end = j + 8;
-				if (line_end > sec->size)
-					line_end = sec->size;
-				for (size_t k = j; k < line_end; k++) {
-					fprintf(f, "%02X", (unsigned char)sec->data[k]);
-					if (k + 1 < line_end)
-						fputc(' ', f);
-				}
-				fprintf(f, "\n");
+	for (size_t si = 0; si < sorted_count; si++) {
+		Section *sec = sorted[si];
+		uint32_t base_addr = (uint32_t)sec->base;
+		for (size_t j = 0; j < sec->size; j += 8) {
+			fprintf(f, "%08X: ", base_addr + (uint32_t)j);
+			size_t line_end = j + 8;
+			if (line_end > sec->size)
+				line_end = sec->size;
+			for (size_t k = j; k < line_end; k++) {
+				fprintf(f, "%02X", (unsigned char)sec->data[k]);
+				if (k + 1 < line_end)
+					fputc(' ', f);
 			}
-		}
-	} else if (opts->relocatable_output) {
-		for (size_t i = 0; i < section_count; i++) {
-			Section *sec = &sections[i];
-			fwrite(sec->data, 1, sec->size, f);
+			fprintf(f, "\n");
 		}
 	}
 
@@ -595,9 +749,17 @@ int main(int argc, char **argv) {
 
 	load_input_files(&opts);
 	assign_section_bases(&opts);
-	resolve_symbols();
-	resolve_relocations();
-	write_output(&opts);
+	resolve_symbols(&opts);
+	resolve_relocations(&opts);
+
+	if(!opts.relocatable_output) {
+		write_output(opts.output_filename);
+	} else {
+		write_relocatable_output_text(opts.output_filename);
+		char obj_filename[64];
+		snprintf(obj_filename, sizeof(obj_filename), "%s.o", opts.output_filename);
+		write_relocatable_output_bin(obj_filename);
+	}
 
 	return 0;
 }

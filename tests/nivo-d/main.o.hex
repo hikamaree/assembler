@@ -1,0 +1,140 @@
+#sections
+.my_data
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 69 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 01 69 00 00 00 00 
+.my_code
+91 E0 0E FE 92 1F 00 00 94 11 00 00 10 00 00 00 
+92 1F 00 00 81 E0 1F FC 21 F0 00 00 82 F0 10 00 
+92 1F 00 00 81 E0 1F FC 92 1F 00 00 81 E0 1F FC 
+21 F0 00 00 82 F0 10 00 91 10 00 07 81 E0 1F FC 
+91 10 00 0B 81 E0 1F FC 21 F0 00 00 82 F0 10 00 
+91 10 00 05 81 E0 1F FC 91 10 00 19 81 E0 1F FC 
+21 F0 00 00 82 F0 10 00 91 10 00 04 81 E0 1F FC 
+91 10 00 18 81 E0 1F FC 21 F0 00 00 82 F0 10 00 
+91 10 00 04 81 E0 1F FC 91 10 00 18 81 E0 1F FC 
+21 F0 00 00 82 F0 10 00 92 1F 00 00 81 E0 1F FC 
+92 1F 00 00 81 E0 1F FC 21 F0 00 00 82 F0 10 00 
+92 1F 00 00 92 11 00 00 92 2F 00 00 92 22 00 00 
+92 3F 00 00 92 33 00 00 92 4F 00 00 92 44 00 00 
+92 5F 00 00 92 55 00 00 92 6F 00 00 92 66 00 00 
+92 7F 00 00 92 77 00 00 92 8F 00 00 92 88 00 00 
+92 9F 00 00 92 A9 00 00 92 B9 00 00 92 C9 00 00 
+00 00 00 00 00 00 00 00 CA FE BA BE 00 00 00 00 
+00 00 00 00 00 00 AB CD 00 00 DC BA 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 
+
+#symbols
+NUM  VALUE      TYPE   BIND   NAME
+0    0x0        NOREL  LOC    handler
+1    0x0        NOREL  LOC    mathNot
+2    0x0        NOREL  LOC    mathAnd
+3    0x0        NOREL  LOC    mathOr
+4    0x0        NOREL  LOC    mathXor
+5    0x0        NOREL  LOC    mathShl
+6    0x0        NOREL  LOC    mathShr
+7    0x0        NOREL  LOC    mathMul
+8    0x0        REL    GLOB   my_start
+9    0x0        REL    GLOB   value1
+10   0x4        REL    GLOB   value2
+11   0x8        REL    GLOB   value3
+12   0xC        REL    GLOB   value4
+13   0x10       REL    GLOB   value5
+14   0x14       REL    GLOB   value6
+15   0x18       REL    GLOB   value7
+16   0x1C       REL    GLOB   value8
+17   0x84       REL    LOC    value9
+18   0x104      NOREL  LOC    SYM_handler
+19   0x108      NOREL  LOC    LIT_CAFEBABE
+20   0x10C      NOREL  LOC    SYM_mathNot
+21   0x110      NOREL  LOC    SYM_value1
+22   0x114      NOREL  LOC    LIT_0000ABCD
+23   0x118      NOREL  LOC    LIT_0000DCBA
+24   0x11C      NOREL  LOC    SYM_mathAnd
+25   0x120      NOREL  LOC    SYM_value2
+26   0x124      NOREL  LOC    SYM_mathOr
+27   0x128      NOREL  LOC    SYM_value3
+28   0x12C      NOREL  LOC    SYM_mathXor
+29   0x130      NOREL  LOC    SYM_value4
+30   0x134      NOREL  LOC    SYM_mathShl
+31   0x138      NOREL  LOC    SYM_value5
+32   0x13C      NOREL  LOC    SYM_mathShr
+33   0x140      NOREL  LOC    SYM_value6
+34   0x144      NOREL  LOC    SYM_c
+35   0x148      NOREL  LOC    SYM_d
+36   0x14C      NOREL  LOC    SYM_mathMul
+37   0x150      NOREL  LOC    SYM_value7
+38   0x154      NOREL  LOC    SYM_value8
+39   0x158      NOREL  LOC    SYM_value9
+40   0x4000     NOREL  LOC    c
+41   0x3000     NOREL  LOC    t
+42   0x3000     NOREL  LOC    b
+43   0xFFFFF000 NOREL  LOC    d
+44   0x1000     NOREL  LOC    a
+45   0x1        NOREL  LOC    g
+46   0x4        NOREL  LOC    off
+47   0x8        NOREL  LOC    off2
+
+#relocations
+NUM  OFFSET     TYPE     SYMBOL               SECTION
+0    0x84       ABS      d                    my_data
+1    0x8C       ABS      d                    my_data
+2    0x104      ABS      handler              my_code
+3    0x6        PC_REL   SYM_handler          my_code
+4    0x12       PC_REL   LIT_CAFEBABE         my_code
+5    0x10C      ABS      mathNot              my_code
+6    0x1A       PC_REL   SYM_mathNot          my_code
+7    0x110      ABS      value1               my_code
+8    0x1E       PC_REL   SYM_value1           my_code
+9    0x22       PC_REL   LIT_0000ABCD         my_code
+10   0x2A       PC_REL   LIT_0000DCBA         my_code
+11   0x11C      ABS      mathAnd              my_code
+12   0x32       PC_REL   SYM_mathAnd          my_code
+13   0x120      ABS      value2               my_code
+14   0x36       PC_REL   SYM_value2           my_code
+15   0x124      ABS      mathOr               my_code
+16   0x4A       PC_REL   SYM_mathOr           my_code
+17   0x128      ABS      value3               my_code
+18   0x4E       PC_REL   SYM_value3           my_code
+19   0x12C      ABS      mathXor              my_code
+20   0x62       PC_REL   SYM_mathXor          my_code
+21   0x130      ABS      value4               my_code
+22   0x66       PC_REL   SYM_value4           my_code
+23   0x134      ABS      mathShl              my_code
+24   0x7A       PC_REL   SYM_mathShl          my_code
+25   0x138      ABS      value5               my_code
+26   0x7E       PC_REL   SYM_value5           my_code
+27   0x13C      ABS      mathShr              my_code
+28   0x92       PC_REL   SYM_mathShr          my_code
+29   0x140      ABS      value6               my_code
+30   0x96       PC_REL   SYM_value6           my_code
+31   0x144      ABS      c                    my_code
+32   0x9A       PC_REL   SYM_c                my_code
+33   0x148      ABS      d                    my_code
+34   0xA2       PC_REL   SYM_d                my_code
+35   0x14C      ABS      mathMul              my_code
+36   0xAA       PC_REL   SYM_mathMul          my_code
+37   0x150      ABS      value7               my_code
+38   0xAE       PC_REL   SYM_value7           my_code
+39   0xB2       PC_REL   SYM_value1           my_code
+40   0xBA       PC_REL   SYM_value2           my_code
+41   0xC2       PC_REL   SYM_value3           my_code
+42   0xCA       PC_REL   SYM_value4           my_code
+43   0xD2       PC_REL   SYM_value5           my_code
+44   0xDA       PC_REL   SYM_value6           my_code
+45   0xE2       PC_REL   SYM_value7           my_code
+46   0x154      ABS      value8               my_code
+47   0xEA       PC_REL   SYM_value8           my_code
+48   0x158      ABS      value9               my_code
+49   0xF2       PC_REL   SYM_value9           my_code
+50   0xF8       ABS      off                  my_code
+51   0xFC       ABS      off2                 my_code

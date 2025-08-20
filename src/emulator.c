@@ -397,289 +397,251 @@ static void execute_instruction(System *sys, uint32_t instr) {
         case 0x0:
             if (instr == 0x00000000u) {
 				printf("\n\n===========================================================\n");
-    			for (int i = 0; i < 16; i++) {
-        			printf("r%-2d=0x%08x", i, sys->cpu.r[i]);
-        			if ((i % 4) == 3) printf("\n");
-        			else printf(" ");
-    			}
-				exit(0);
-            }
-            break;
-        case 0x1:
+				for (int i = 0; i < 16; i++) {
+					printf("r%-2d=0x%08x", i, sys->cpu.r[i]);
+					if ((i % 4) == 3) printf("\n");
+					else printf(" ");
+				}
+				atomic_store(&sys->running, 0);
+			}
+			break;
+		case 0x1:
 			cpu_push(sys, *sys->cpu.status);
 			cpu_push(sys, *sys->cpu.pc);
 			*sys->cpu.cause = 4;
 			*sys->cpu.status = (*sys->cpu.status) & (~0x1);
 			*sys->cpu.pc = *sys->cpu.handler;
-            break;
-        case 0x2:
-            switch (mmmm) {
-                case 0x0:
+			break;
+		case 0x2:
+			switch (mmmm) {
+				case 0x0:
 					cpu_push(sys, *sys->cpu.pc);
 					*sys->cpu.pc = sys->cpu.r[a] + sys->cpu.r[b] + d;
-                    break;
-                case 0x1:
+					break;
+				case 0x1:
 					cpu_push(sys, *sys->cpu.pc);
 					*sys->cpu.pc = sys_mem_read32(sys, sys->cpu.r[a] + sys->cpu.r[b] + d);
-                    break;
-                default:
+					break;
+				default:
 					raise_interrupt(sys, 1);
-            }
-            break;
+			}
+			break;
 		case 0x3:
-		    switch (mmmm) {
-		        case 0x0:
+			switch (mmmm) {
+				case 0x0:
 					*sys->cpu.pc = sys->cpu.r[a] + d;
 					break;
-		        case 0x1:
+				case 0x1:
 					if(sys->cpu.r[b] == sys->cpu.r[c]) *sys->cpu.pc = sys->cpu.r[a] + d;
 					break;
-		        case 0x2:
+				case 0x2:
 					if(sys->cpu.r[b] != sys->cpu.r[c]) *sys->cpu.pc = sys->cpu.r[a] + d;
 					break;
-		        case 0x3:
+				case 0x3:
 					if((int32_t)sys->cpu.r[b] > (int32_t)sys->cpu.r[c]) *sys->cpu.pc = sys->cpu.r[a] + d;
 					break;
-		        case 0x8:
+				case 0x8:
 					*sys->cpu.pc = sys_mem_read32(sys, sys->cpu.r[a] + d);
 					break;
-		        case 0x9:
+				case 0x9:
 					if(sys->cpu.r[b] == sys->cpu.r[c]) *sys->cpu.pc = sys_mem_read32(sys, sys->cpu.r[a] + d);
 					break;
-		        case 0xA:
+				case 0xA:
 					if(sys->cpu.r[b] != sys->cpu.r[c]) *sys->cpu.pc = sys_mem_read32(sys, sys->cpu.r[a] + d);
 					break;
-		        case 0xB:
+				case 0xB:
 					if((int32_t)sys->cpu.r[b] > (int32_t)sys->cpu.r[c]) *sys->cpu.pc = sys_mem_read32(sys, sys->cpu.r[a] + d);
 					break;
-		        default:
+				default:
 					raise_interrupt(sys, 1);
-		    }
-		    break;
-        case 0x4: {
-			uint32_t temp = sys->cpu.r[b];
-			sys->cpu.r[b] = sys ->cpu.r[c];
-			sys->cpu.r[c] = temp;
-            break;
-		}
-        case 0x5:
-            switch (mmmm) {
-                case 0x0:
-					sys->cpu.r[a] = sys->cpu.r[b] + sys->cpu.r[c];
-					break;
-                case 0x1:
-					sys->cpu.r[a] = sys->cpu.r[b] - sys->cpu.r[c];
-					break;
-                case 0x2:
-					sys->cpu.r[a] = sys->cpu.r[b] * sys->cpu.r[c];
-					break;
-                case 0x3:
-					sys->cpu.r[a] = sys->cpu.r[b] / sys->cpu.r[c];
-					break;
-                default:
-					raise_interrupt(sys, 1);
-            }
-            break;
-        case 0x6:
-            switch (mmmm) {
-                case 0x0:
-					sys->cpu.r[a] = ~sys->cpu.r[b];
-					break;
-                case 0x1:
-					sys->cpu.r[a] = sys->cpu.r[b] & sys->cpu.r[c];
-					break;
-                case 0x2:
-					sys->cpu.r[a] = sys->cpu.r[b] | sys->cpu.r[c];
-					break;
-                case 0x3:
-					sys->cpu.r[a] = sys->cpu.r[b] ^ sys->cpu.r[c];
-					break;
-                default:
-					raise_interrupt(sys, 1);
-            }
-            break;
-        case 0x7:
-            switch (mmmm) {
-                case 0x0:
-					sys->cpu.r[a] = sys->cpu.r[b] << sys->cpu.r[c];
-					break;
-                case 0x1:
-					sys->cpu.r[a] = sys->cpu.r[b] >> sys->cpu.r[c];
-					break;
-                default:
-					raise_interrupt(sys, 1);
-            }
-            break;
-        case 0x8:
-            switch (mmmm) {
-                case 0x0: {
-					uint32_t addr = sys->cpu.r[a] + sys->cpu.r[b] + d;
-					sys_mem_write32(sys, addr, sys->cpu.r[c]);
-					break;
-				}
-                case 0x2: {
-					uint32_t addr = sys->cpu.r[a] + sys->cpu.r[b] + d;
-					addr = sys_mem_read32(sys, addr);
-					sys_mem_write32(sys, addr, sys->cpu.r[c]);
-					break;
-				}
-                case 0x1: {
-					sys->cpu.r[a] += d;
-					uint32_t addr = sys->cpu.r[a];
-					sys_mem_write32(sys, addr, sys->cpu.r[c]);
-					break;
-				}
-                default:
-					raise_interrupt(sys, 1);
-            }
-            break;
-        case 0x9:
-            switch (mmmm) {
-                case 0x0:
-					sys->cpu.r[a] = sys->cpu.csr[b];
-					break;
-                case 0x1:
-					sys->cpu.r[a] = sys->cpu.r[b] + d;
-					break;
-                case 0x2:
-					sys->cpu.r[a] = sys_mem_read32(sys, sys->cpu.r[b] + sys->cpu.r[c] + d);
-					break;
-                case 0x3:
-					sys->cpu.r[a] = sys_mem_read32(sys, sys->cpu.r[b]);
-					sys->cpu.r[b] += d;
-					break;
-                case 0x4:
-					sys->cpu.csr[a] = sys->cpu.r[b];
-					break;
-                case 0x5:
-					sys->cpu.csr[a] = sys->cpu.r[b] | d;
-					break;
-                case 0x6:
-					sys->cpu.csr[a] = sys_mem_read32(sys, sys->cpu.r[b] + sys->cpu.r[c] + d);
-					break;
-                case 0x7:
-					sys->cpu.csr[a] = sys_mem_read32(sys, sys->cpu.r[b]);
-					sys->cpu.r[b] += d;
-					break;
-                default:
-					raise_interrupt(sys, 1);
-            }
-            break;
-        default:
-			raise_interrupt(sys, 1);
-    }
+			}
+			break;
+		case 0x4: {
+					  uint32_t temp = sys->cpu.r[b];
+					  sys->cpu.r[b] = sys ->cpu.r[c];
+					  sys->cpu.r[c] = temp;
+					  break;
+				  }
+		case 0x5:
+				  switch (mmmm) {
+					  case 0x0:
+						  sys->cpu.r[a] = sys->cpu.r[b] + sys->cpu.r[c];
+						  break;
+					  case 0x1:
+						  sys->cpu.r[a] = sys->cpu.r[b] - sys->cpu.r[c];
+						  break;
+					  case 0x2:
+						  sys->cpu.r[a] = sys->cpu.r[b] * sys->cpu.r[c];
+						  break;
+					  case 0x3:
+						  sys->cpu.r[a] = sys->cpu.r[b] / sys->cpu.r[c];
+						  break;
+					  default:
+						  raise_interrupt(sys, 1);
+				  }
+				  break;
+		case 0x6:
+				  switch (mmmm) {
+					  case 0x0:
+						  sys->cpu.r[a] = ~sys->cpu.r[b];
+						  break;
+					  case 0x1:
+						  sys->cpu.r[a] = sys->cpu.r[b] & sys->cpu.r[c];
+						  break;
+					  case 0x2:
+						  sys->cpu.r[a] = sys->cpu.r[b] | sys->cpu.r[c];
+						  break;
+					  case 0x3:
+						  sys->cpu.r[a] = sys->cpu.r[b] ^ sys->cpu.r[c];
+						  break;
+					  default:
+						  raise_interrupt(sys, 1);
+				  }
+				  break;
+		case 0x7:
+				  switch (mmmm) {
+					  case 0x0:
+						  sys->cpu.r[a] = sys->cpu.r[b] << sys->cpu.r[c];
+						  break;
+					  case 0x1:
+						  sys->cpu.r[a] = sys->cpu.r[b] >> sys->cpu.r[c];
+						  break;
+					  default:
+						  raise_interrupt(sys, 1);
+				  }
+				  break;
+		case 0x8:
+				  switch (mmmm) {
+					  case 0x0: {
+									uint32_t addr = sys->cpu.r[a] + sys->cpu.r[b] + d;
+									sys_mem_write32(sys, addr, sys->cpu.r[c]);
+									break;
+								}
+					  case 0x2: {
+									uint32_t addr = sys->cpu.r[a] + sys->cpu.r[b] + d;
+									addr = sys_mem_read32(sys, addr);
+									sys_mem_write32(sys, addr, sys->cpu.r[c]);
+									break;
+								}
+					  case 0x1: {
+									sys->cpu.r[a] += d;
+									uint32_t addr = sys->cpu.r[a];
+									sys_mem_write32(sys, addr, sys->cpu.r[c]);
+									break;
+								}
+					  default:
+								raise_interrupt(sys, 1);
+				  }
+				  break;
+		case 0x9:
+				  switch (mmmm) {
+					  case 0x0:
+						  sys->cpu.r[a] = sys->cpu.csr[b];
+						  break;
+					  case 0x1:
+						  sys->cpu.r[a] = sys->cpu.r[b] + d;
+						  break;
+					  case 0x2:
+						  sys->cpu.r[a] = sys_mem_read32(sys, sys->cpu.r[b] + sys->cpu.r[c] + d);
+						  break;
+					  case 0x3:
+						  sys->cpu.r[a] = sys_mem_read32(sys, sys->cpu.r[b]);
+						  sys->cpu.r[b] += d;
+						  break;
+					  case 0x4:
+						  sys->cpu.csr[a] = sys->cpu.r[b];
+						  break;
+					  case 0x5:
+						  sys->cpu.csr[a] = sys->cpu.r[b] | d;
+						  break;
+					  case 0x6:
+						  sys->cpu.csr[a] = sys_mem_read32(sys, sys->cpu.r[b] + sys->cpu.r[c] + d);
+						  break;
+					  case 0x7:
+						  sys->cpu.csr[a] = sys_mem_read32(sys, sys->cpu.r[b]);
+						  sys->cpu.r[b] += d;
+						  break;
+					  default:
+						  raise_interrupt(sys, 1);
+				  }
+				  break;
+		default:
+				  raise_interrupt(sys, 1);
+	}
 }
 
 void cpu_run(System *sys) {
-    while (atomic_load(&sys->running)) {
-        uint32_t instr = sys_mem_read32(sys, *sys->cpu.pc);
-        *sys->cpu.pc += 4;
-
-        if (instr == 0xFFFFFFFFu) {
-            atomic_store(&sys->running, 0);
-            break;
-        }
-
+	while (atomic_load(&sys->running)) {
+		uint32_t instr = sys_mem_read32(sys, *sys->cpu.pc);
+		*sys->cpu.pc += 4;
 		execute_instruction(sys, instr);
-
-        cpu_handle_interrupt(sys);
-    }
-}
-
-void dump_memory8(uint32_t start, uint32_t end, System *sys) {
-    for (uint32_t addr = start; addr < end; addr++) {
-        if ((addr - start) % 16 == 0) {
-            printf("%08X: ", addr);
-        }
-        printf("%02X ", sys_mem_read8(sys, addr));
-        if ((addr - start) % 16 == 15) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-}
-
-void dump_memory32(uint32_t start, uint32_t end, System *sys) {
-    for (uint32_t addr = start; addr < end; addr+=4) {
-        if ((addr - start) % 16 == 0) {
-            printf("%08X: ", addr);
-        }
-        printf("%08X ", sys_mem_read32(sys, addr));
-        if ((addr - start) % 16 == 12) {
-            printf("\n");
-        }
-    }
-    printf("\n");
+		cpu_handle_interrupt(sys);
+	}
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <mem_content.hex>\n", argv[0]);
-        return 1;
-    }
-    System sys;
-    memset(&sys, 0, sizeof(sys));
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <mem_content.hex>\n", argv[0]);
+		return 1;
+	}
+	System sys;
+	memset(&sys, 0, sizeof(sys));
 
-    sys.mem = malloc(sizeof(Memory));
-    if (!sys.mem) {
-        perror("malloc mem");
-        return 1;
-    }
-    mem_init(sys.mem);
+	sys.mem = malloc(sizeof(Memory));
+	if (!sys.mem) {
+		perror("malloc mem");
+		return 1;
+	}
+	mem_init(sys.mem);
 
-    if (pthread_mutex_init(&sys.mem_lock, NULL) != 0) {
-        perror("pthread_mutex_init");
-        free(sys.mem);
-        return 1;
-    }
+	if (pthread_mutex_init(&sys.mem_lock, NULL) != 0) {
+		perror("pthread_mutex_init");
+		free(sys.mem);
+		return 1;
+	}
 
-    atomic_store(&sys.pending_interrupt, 0);
-    atomic_store(&sys.pending_cause, 0);
-    atomic_store(&sys.term_has_char, 0);
-    atomic_store(&sys.term_char, 0);
-    atomic_store(&sys.tim_cfg, 0);
-    atomic_store(&sys.running, 1);
+	atomic_store(&sys.pending_interrupt, 0);
+	atomic_store(&sys.pending_cause, 0);
+	atomic_store(&sys.term_has_char, 0);
+	atomic_store(&sys.term_char, 0);
+	atomic_store(&sys.tim_cfg, 0);
+	atomic_store(&sys.running, 1);
 
-    int r = load_hexfile(&sys, argv[1]);
-    if (r != 0) {
-        fprintf(stderr, "Failed to load memory file (%d)\n", r);
-        free(sys.mem);
-        return 2;
-    }
+	int r = load_hexfile(&sys, argv[1]);
+	if (r != 0) {
+		fprintf(stderr, "Failed to load memory file (%d)\n", r);
+		free(sys.mem);
+		return 2;
+	}
 
-    cpu_init(&sys);
+	cpu_init(&sys);
 
-	// mem_write32(&sys, 0x40000080, 0x12345678);
+	pthread_t term_tid, tim_tid;
+	if (pthread_create(&term_tid, NULL, terminal_thread, &sys) != 0) {
+		perror("pthread_create term");
+		free(sys.mem);
+		return 1;
+	}
+	if (pthread_create(&tim_tid, NULL, timer_thread, &sys) != 0) {
+		perror("pthread_create timer");
+		atomic_store(&sys.running, 0);
+		pthread_join(term_tid, NULL);
+		free(sys.mem);
+		return 1;
+	}
 
-    // dump_memory32(0x00000000, 0x00000100, &sys);
-    // dump_memory32(0x40000000, 0x40000100, &sys);
+	cpu_run(&sys);
 
-    pthread_t term_tid, tim_tid;
-    if (pthread_create(&term_tid, NULL, terminal_thread, &sys) != 0) {
-        perror("pthread_create term");
-        free(sys.mem);
-        return 1;
-    }
-    if (pthread_create(&tim_tid, NULL, timer_thread, &sys) != 0) {
-        perror("pthread_create timer");
-        atomic_store(&sys.running, 0);
-        pthread_join(term_tid, NULL);
-        free(sys.mem);
-        return 1;
-    }
+	atomic_store(&sys.running, 0);
+	pthread_join(term_tid, NULL);
+	pthread_join(tim_tid, NULL);
 
-    cpu_run(&sys);
+	pthread_mutex_destroy(&sys.mem_lock);
 
-    atomic_store(&sys.running, 0);
-    pthread_join(term_tid, NULL);
-    pthread_join(tim_tid, NULL);
+	for (uint32_t i = 0; i < NUM_PAGES; ++i) {
+		if (sys.mem->pages[i]) free(sys.mem->pages[i]);
+	}
+	free(sys.mem);
 
-    pthread_mutex_destroy(&sys.mem_lock);
-
-    for (uint32_t i = 0; i < NUM_PAGES; ++i) {
-        if (sys.mem->pages[i]) free(sys.mem->pages[i]);
-    }
-    free(sys.mem);
-
-    return 0;
+	return 0;
 }

@@ -1,0 +1,11 @@
+#sections
+.isr
+93 FE 00 04 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+
+#symbols
+NUM  VALUE      TYPE   BIND   NAME
+0    0x0        REL    GLOB   isr_timer
+
+#relocations
+NUM  OFFSET     TYPE     SYMBOL               SECTION

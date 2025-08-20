@@ -15,15 +15,6 @@ extern FILE *yyin;
 
 char* g_current_yytext = NULL;
 
-// void assembler_handle_label(const char* label);
-// void assembler_handle_section(const char* section_name);
-// void assembler_handle_word(const StringList* words);
-// void assembler_handle_skip(int size);
-// void assembler_handle_global(const StringList* symbols);
-// void assembler_handle_extern(const StringList* symbols);
-// void assembler_handle_end(void);
-// void assembler_handle_instruction(const char* mnemonic, const StringList* operands);
-
 #define CHECK_REG(op, idx) \
     if ((op).type != OPERAND_REG) { \
         fprintf(stderr, "Operand %d must be a register\n", idx); \
@@ -69,11 +60,11 @@ static size_t equ_symbol_count = 0;
 static char *pending_mem_symbols[MAX_SYMBOLS];
 static size_t pending_mem_count = 0;
 
-Section sections[64];
-int section_count = 0;
+static Section sections[64];
+static size_t section_count = 0;
 
 Section *get_section(const char *name) {
-    for (int i = 0; i < section_count; i++) {
+    for (size_t i = 0; i < section_count; i++) {
         if (strcmp(sections[i].name, name) == 0)
             return &sections[i];
     }
@@ -96,21 +87,6 @@ void section_write_bytes(Section *sec, const void *buf, size_t len) {
     }
     memcpy(sec->data + sec->size, buf, len);
     sec->size += len;
-}
-
-uint32_t parse_literal(const char* s) {
-    return (uint32_t)strtoul(s, NULL, 0);
-}
-
-bool is_literal(const char* s) {
-    if (!s || *s == '\0') return false;
-
-    if (s[0] == '-' || isdigit((unsigned char)s[0])) {
-        char *endptr;
-        strtol(s, &endptr, 0);
-        return (*endptr == '\0');
-    }
-    return false;
 }
 
 Symbol* find_symbol(const char* name) {
@@ -173,47 +149,104 @@ void pending_remove_mem_symbol(const char *name) {
 }
 
 int32_t calc_expression(Expression* e) {
-	int op1 = 0;
-	if(e->op1.type == OPERAND_LITERAL) {
-		op1 = e->op1.literal;
-	} else if(e->op1.type == OPERAND_SYMBOL) {
-		Symbol* sym = find_symbol(e->op1.symbol);
-		if(!sym->defined) {
-			printf("Extern symbols are not supported in expressions");
-			exit(1);
-		}
-		op1 = sym->offset;
-	} else {
-		printf("Invalid expression operand\n");
-		exit(1);
-	}
+    int32_t result = 0;
+	Expression* cur = e;
 
-	if(e->operation == NONE) {
-		return op1;
-	}
+    while(cur != NULL) {
+        int32_t value = 0;
 
-	int op2 = 0;
+        if (cur->operand.type == OPERAND_LITERAL) {
+            value = cur->operand.literal;
+        } else if (cur->operand.type == OPERAND_SYMBOL) {
+            Symbol* sym = find_symbol(cur->operand.symbol);
+            free(cur->operand.symbol);
+            if (!sym) {
+                fprintf(stderr, "Unknown symbol: %s\n", cur->operand.symbol);
+                exit(1);
+            }
+            if (!sym->defined) {
+                fprintf(stderr, "Extern symbols are not supported in expressions\n");
+                exit(1);
+            }
+            value = sym->offset;
+        } else {
+            fprintf(stderr, "Invalid expression operand type %d\n", cur->operand.type);
+            exit(1);
+        }
 
-	if(e->op2.type == OPERAND_LITERAL) {
-		op2 = e->op2.literal;
-	} else if(e->op2.type == OPERAND_SYMBOL) {
-		Symbol* sym = find_symbol(e->op2.symbol);
-		if(!sym->defined) {
-			printf("Extern symbols are not supported in expressions");
-			exit(1);
-		}
-		op2 = sym->offset;
-	} else {
-		printf("Invalid expression operand\n");
-		exit(1);
-	}
+        if (cur->op == OP_ADD || cur->op == NONE) {
+            result += value;
+        } else if (cur->op == OP_SUB) {
+            result -= value;
+        } else {
+            fprintf(stderr, "Unknown operator %d\n", cur->op);
+            exit(1);
+        }
+		Expression* next = cur->next;
+		free(cur);
+		cur = next;
+    }
 
-	if(e->operation == ADDITION) {
-		return op1 + op2;
-	}
-
-	return op1 - op2;
+    return result;
 }
+
+void calc_expressions() {
+    bool progress;
+    size_t remaining = equ_symbol_count;
+    bool* evaluated = calloc(equ_symbol_count, sizeof(bool));
+
+    do {
+        progress = false;
+
+        for (size_t i = 0; i < equ_symbol_count; i++) {
+            if (evaluated[i]) continue;
+
+            EquSymbol esym = equ_symbols[i];
+            Symbol* sym = find_symbol(esym.symbol);
+            if (!sym) sym = add_symbol(esym.symbol);
+
+            int32_t value = 0;
+            bool can_eval = true;
+
+            for (Expression* cur = esym.expression; cur != NULL; cur = cur->next) {
+                if (cur->operand.type == OPERAND_SYMBOL) {
+                    Symbol* s = find_symbol(cur->operand.symbol);
+                    if (!s || !s->defined) {
+                        can_eval = false;
+                        break;
+                    }
+                }
+            }
+
+            if (can_eval) {
+                value = calc_expression(esym.expression);
+                sym->offset = value;
+                sym->defined = true;
+                sym->relocatable = false;
+
+                if (pending_has_mem_symbol(esym.symbol)) {
+                    if (sym->offset < -2048 || sym->offset > 2047) {
+                        fprintf(stderr, "Symbol %s offset 0x%X too large to embed in prior MEM operand usage.\n", esym.symbol, sym->offset);
+                        exit(EXIT_FAILURE);
+                    }
+                    pending_remove_mem_symbol(esym.symbol);
+                }
+
+                evaluated[i] = true;
+                progress = true;
+                remaining--;
+            }
+        }
+
+        if (!progress && remaining > 0) {
+            fprintf(stderr, "Cannot evaluate some symbols due to undefined dependencies or cycles.\n");
+            exit(EXIT_FAILURE);
+        }
+    } while (remaining > 0);
+
+    free(evaluated);
+}
+
 
 int parse_register(const char *s) {
     if (!s || s[0] == '\0') return -1;
@@ -250,6 +283,7 @@ void add_relocation(Section *sec, size_t offset, const char *symbol, RelocType t
     relocations[reloc_count].symbol = strdup(symbol);
     relocations[reloc_count].type = type;
     relocations[reloc_count].dpool = false;
+
     reloc_count++;
 }
 
@@ -365,13 +399,24 @@ void assembler_handle_section(const char* section_name) {
 	strncpy(state.current_section, section_name, sizeof(state.current_section) - 1);
 }
 
+bool is_literal(const char* s) {
+    if (!s || *s == '\0') return false;
+
+    if (s[0] == '-' || isdigit((unsigned char)s[0])) {
+        char *endptr;
+        strtol(s, &endptr, 0);
+        return (*endptr == '\0');
+    }
+    return false;
+}
+
 void assembler_handle_word(const StringList* words) {
 	Section *sec = get_section(state.current_section);
 	for (int i = 0; i < words->size; i++) {
 		const char *w = words->data[i];
 		uint32_t val = 0;
 		if (is_literal(w)) {
-			val = parse_literal(w);
+			val =(uint32_t)strtoul(w, NULL, 0); 
 		} else {
 			val = 0;
 			add_relocation(sec, sec->size, w, RELOC_ABS);
@@ -426,7 +471,6 @@ void assembler_handle_ascii(const char* str) {
     Section *sec = get_section(state.current_section);
     section_write_bytes(sec, (const unsigned char*)str, strlen(str));
     uint8_t zero = 0;
-    section_write_bytes(sec, &zero, 1); // nisam lud ovo sam dodao za kraj stringa \0
     while (sec->size % 4 != 0) {
         section_write_bytes(sec, &zero, 1);
     }
@@ -938,7 +982,7 @@ void assembler_handle_csrwr(const Operand* r, const Operand* csr) {
 }
 
 void flatten_all_dpools(void) {
-    for (int i = 0; i < section_count; i++) {
+    for (size_t i = 0; i < section_count; i++) {
         Section *sec = &sections[i];
         if (sec->dpool_size == 0) continue;
 
@@ -1062,7 +1106,6 @@ void write_output_file(const char* filename) {
     fclose(f);
 }
 
-
 void write_text_output_file(const char* filename) {
 	FILE *f = fopen(filename, "w");
 	if (!f) {
@@ -1071,7 +1114,7 @@ void write_text_output_file(const char* filename) {
 	}
 
 	fprintf(f, "#sections\n");
-	for (int i = 0; i < section_count; i++) {
+	for (size_t i = 0; i < section_count; i++) {
 		Section *sec = &sections[i];
 		fprintf(f, ".%s\n", sec->name);
 		for (uint32_t j = 0; j < sec->size; j++) {
@@ -1146,27 +1189,7 @@ int main(int argc, char *argv[]) {
 
 	flatten_all_dpools();
 
-	for(size_t i = 0; i < equ_symbol_count; i++) {
-		EquSymbol esym = equ_symbols[i];
-		Symbol* sym = add_symbol(esym.symbol);
-		if (sym->defined) {
-			fprintf(stderr, "Error: symbol '%s' is already defined!\n", esym.symbol);
-			exit(EXIT_FAILURE);
-		}
-
-		sym->defined = true;
-		sym->relocatable = false;
-
-		sym->offset = calc_expression(esym.expression);
-
-		if (pending_has_mem_symbol(esym.symbol)) {
-			if (sym->offset < -2048 || sym->offset > 2047) {
-				fprintf(stderr, "Symbol %s offset 0x%X too large to embed in prior MEM operand usage.\n", esym.symbol, sym->offset);
-				exit(EXIT_FAILURE);
-			}
-			pending_remove_mem_symbol(esym.symbol);
-		}
-	}
+	calc_expressions();
 
 	if (pending_mem_count > 0) {
 		for (size_t i = 0; i < pending_mem_count; i++) {
@@ -1183,6 +1206,20 @@ int main(int argc, char *argv[]) {
 		write_text_output_file(hex_filename);
 	} else {
 		printf("No output file specified, output omitted\n");
+	}
+
+	for(size_t i = 0; i < symbol_count; i++) {
+		free(symbols[i].name);
+		free(symbols[i].section);
+	}
+
+	for(size_t i = 0; i < reloc_count; i++) {
+		free(relocations[i].symbol);
+	}
+
+	for(size_t i = 0; i < section_count; i++) {
+		free(sections[i].data);
+		free(sections[i].dpool_data);
 	}
 
 	return EXIT_SUCCESS;
