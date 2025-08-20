@@ -14,8 +14,4 @@ ${LINKER} -hex \
   -place=my_code@0x40000000 \
   -o program.hex \
   main.o isr_lib.hex.o handler.o
-${LINKER} -hex \
-  -place=my_code@0x40000000 \
-  -o program.hex2 \
-  main.o isr_timer.o isr_terminal.o handler.o
-${EMULATOR} program.hex2
+${EMULATOR} program.hex

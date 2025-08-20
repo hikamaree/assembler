@@ -284,6 +284,10 @@ void add_relocation(Section *sec, size_t offset, const char *symbol, RelocType t
     relocations[reloc_count].type = type;
     relocations[reloc_count].dpool = false;
 
+	if(type == RELOC_PC_REL) {
+		find_symbol(symbol)->relocatable = true;
+	}
+
     reloc_count++;
 }
 
@@ -564,11 +568,9 @@ void assembler_handle_call(const Operand* op) {
             regA = 15;
             regB = 0;
 
-            size_t instr_start = sec->size;
-            size_t reloc_offset = instr_start + 2;
             char symname[64];
             snprintf(symname, sizeof(symname), "SYM_%s", op->symbol);
-            add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+            add_relocation(sec, sec->size, symname, RELOC_PC_REL);
 			break;
 
         case OPERAND_ADDR_LITERAL: {
@@ -584,11 +586,9 @@ void assembler_handle_call(const Operand* op) {
                 regA = 15;
                 regB = 0;
 
-                size_t instr_start = sec->size;
-                size_t reloc_offset = instr_start + 2;
                 char symname[64];
                 snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)op->literal);
-                add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+                add_relocation(sec, sec->size, symname, RELOC_PC_REL);
             }
 			break;
         }
@@ -637,11 +637,9 @@ static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, con
 
         mod = mod_i;
         regA = 15;
-        size_t instr_start = sec->size;
-        size_t reloc_offset = instr_start + 2;
         char symname[64];
         snprintf(symname, sizeof(symname), "SYM_%s", op->symbol);
-        add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+        add_relocation(sec, sec->size, symname, RELOC_PC_REL);
     } else if (op->type == OPERAND_ADDR_LITERAL) {
 		if (op->literal >= -2048 && op->literal < 2048) {
             mod = mod_d;
@@ -652,11 +650,9 @@ static void assembler_handle_cond_jump(const Operand* r1, const Operand* r2, con
             mod = mod_i;
             regA = 15;
 
-            size_t instr_start = sec->size;
-            size_t reloc_offset = instr_start + 2;
             char symname[32];
             snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)op->literal);
-            add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+            add_relocation(sec, sec->size, symname, RELOC_PC_REL);
         }
     } else {
         fprintf(stderr, "Invalid operand type for conditional jump\n");
@@ -801,11 +797,9 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 		    regB = 15;
 		    regC = 0;
 
-		    size_t instr_start = sec->size;
-		    size_t reloc_offset = instr_start + 2;
 		    char symname[64];
 		    snprintf(symname, sizeof(symname), "SYM_%s", src->symbol);
-		    add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+		    add_relocation(sec, sec->size, symname, RELOC_PC_REL);
 			break;
 
 		case OPERAND_LITERAL:
@@ -821,11 +815,9 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 		        regB = 15;
 		        regC = 0;
 
-		        size_t instr_start = sec->size;
-		        size_t reloc_offset = instr_start + 2;
 		        char symname[32];
 		        snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)src->literal);
-		        add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+		        add_relocation(sec, sec->size, symname, RELOC_PC_REL);
 			}
 		    break;
 
@@ -836,11 +828,9 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
 		    	regB = 15;
 		    	regC = 0;
 
-		    	size_t instr_start = sec->size;
-		    	size_t reloc_offset = instr_start + 2;
 		    	char symname[64];
 		    	snprintf(symname, sizeof(symname), "SYM_%s", src->symbol);
-		    	add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+		    	add_relocation(sec, sec->size, symname, RELOC_PC_REL);
             	emit_instruction(0x9, mod, regA, regB, regC, disp);
 
                 mod = 0x2;
@@ -868,11 +858,9 @@ void assembler_handle_ld(const Operand* src, const Operand* dst) {
                 regB = 15;
                 regC = 0;
                 disp = 0;
-                size_t instr1_start = sec->size;
-                size_t reloc1_offset = instr1_start + 2;
                 char symname[32];
                 snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)src->literal);
-                add_relocation(sec, reloc1_offset, symname, RELOC_PC_REL);
+                add_relocation(sec, sec->size, symname, RELOC_PC_REL);
                 emit_instruction(0x9, mod, regA, regB, regC, disp);
 
                 mod = 0x2;
@@ -933,11 +921,9 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
             regA = 15;
             regB = 0;
 
-            size_t instr_start = sec->size;
-            size_t reloc_offset = instr_start + 2;
             char symname[64];
             snprintf(symname, sizeof(symname), "SYM_%s", dst->symbol);
-            add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+            add_relocation(sec, sec->size, symname, RELOC_PC_REL);
 			break;
 
         case OPERAND_ADDR_LITERAL:
@@ -953,11 +939,9 @@ void assembler_handle_st(const Operand* src, const Operand* dst) {
                 regA = 15;
                 regB = 0;
 
-                size_t instr_start = sec->size;
-                size_t reloc_offset = instr_start + 2;
                 char symname[32];
                 snprintf(symname, sizeof(symname), "LIT_%08X", (uint32_t)dst->literal);
-                add_relocation(sec, reloc_offset, symname, RELOC_PC_REL);
+                add_relocation(sec, sec->size, symname, RELOC_PC_REL);
         	}
             break;
 

@@ -3,3 +3,5 @@ linker
 emulator
 build/
 .cache/
+tests/**/*.o
+tests/**/*.hex

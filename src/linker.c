@@ -441,7 +441,6 @@ void resolve_symbols(LinkerOptions* opts) {
             Symbol *sym = &of->symbols[si];
 
             if (sym->relocatable && sym->section) {
-				printf("Old sym %s = %X\n", sym->name, sym->offset);
                 for (size_t sgi = 0; sgi < of->section_count; sgi++) {
                     Section *s = &sections[of->section_global_index[sgi]];
 					if (!strcmp(s->name, sym->section)) {
@@ -449,7 +448,6 @@ void resolve_symbols(LinkerOptions* opts) {
 						break;
 					}
 				}
-				printf("New sym %s = %X\n", sym->name, sym->offset);
 			}
 		}
 	}
@@ -528,38 +526,29 @@ void resolve_relocations(LinkerOptions* opts) {
 			}
 
 			Section *sec = rel->section;
-			size_t section_local_offset = 0;
-			for (size_t i = 0; i < of->section_count; i++) {
-				if (&sections[of->section_global_index[i]] == sec) {
-					section_local_offset = of->section_offset_in_global[i];
-					break;
-				}
-			}
 
-			size_t offset = rel->offset;
-			if (offset + 4 > sec->size) {
+			if (rel->offset + 4 > sec->size) {
 				fprintf(stderr, "Error: Relocation offset out of bounds in section %s\n", sec->name);
 				exit(1);
 			}
 
-			uint32_t addr = target->offset;
-
 			if (rel->type == RELOC_ABS) {
-				sec->data[offset + 0] |= (addr >> 24) & 0xFF;
-				sec->data[offset + 1] |= (addr >> 16) & 0xFF;
-				sec->data[offset + 2] |= (addr >> 8) & 0xFF;
-				sec->data[offset + 3] |= (addr >> 0) & 0xFF;
+				sec->data[rel->offset + 0] |= (target->offset >> 24) & 0xFF;
+				sec->data[rel->offset + 1] |= (target->offset >> 16) & 0xFF;
+				sec->data[rel->offset + 2] |= (target->offset >> 8) & 0xFF;
+				sec->data[rel->offset + 3] |= (target->offset >> 0) & 0xFF;
 			} else if (rel->type == RELOC_PC_REL) {
-				size_t instr = (offset >= 2) ? offset - 2 : 0;
-				uint32_t pc = (uint32_t)instr + 4;
-				uint32_t rel_val = addr - pc + section_local_offset;
-				uint32_t orig = (sec->data[instr + 0] << 24) | (sec->data[instr + 1] << 16)
-					| (sec->data[instr + 2] << 8) | sec->data[instr + 3];
+				uint32_t pc = (uint32_t)rel->offset + 4;
+				uint32_t rel_val = target->offset - pc - sec->base;
+				uint32_t orig = (sec->data[rel->offset + 0] << 24) |
+					(sec->data[rel->offset + 1] << 16) |
+					(sec->data[rel->offset + 2] << 8) |
+					sec->data[rel->offset + 3];
 				uint32_t patched = orig | rel_val;
-				sec->data[instr + 0] = (patched >> 24) & 0xFF;
-				sec->data[instr + 1] = (patched >> 16) & 0xFF;
-				sec->data[instr + 2] = (patched >> 8) & 0xFF;
-				sec->data[instr + 3] = (patched >> 0) & 0xFF;
+				sec->data[rel->offset + 0] = (patched >> 24) & 0xFF;
+				sec->data[rel->offset + 1] = (patched >> 16) & 0xFF;
+				sec->data[rel->offset + 2] = (patched >> 8) & 0xFF;
+				sec->data[rel->offset + 3] = (patched >> 0) & 0xFF;
 			}
 		}
 	}
@@ -627,10 +616,15 @@ void write_relocatable_output_bin(const char* filename) {
 		}
 	}
 
+	uint32_t rc = 0;
+	for(size_t i = 0; i < object_file_count; i++) {
+		rc += object_files[i].reloc_count;
+	}
+	write_exact(f, &rc, sizeof(rc));
+
 	for(size_t i = 0; i < object_file_count; i++) {
 		ObjectFile* of = &object_files[i];
 		uint32_t rc = (uint32_t)of->reloc_count;
-		fwrite(&rc, sizeof(rc), 1, f);
 		for (uint32_t i = 0; i < rc; i++) {
 			Relocation *rel = &of->relocations[i];
 
