@@ -739,14 +739,14 @@ void assembler_handle_shl(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
 
-    emit_instruction(0x7, 0x0, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x7, 0x0, r2->reg, r2->reg, r1->reg, 0);
 }
 
 void assembler_handle_shr(const Operand* r1, const Operand* r2) {
     CHECK_REG(*r1, 1);
     CHECK_REG(*r2, 2);
 
-    emit_instruction(0x7, 0x1, r1->reg, r1->reg, r2->reg, 0);
+    emit_instruction(0x7, 0x1, r2->reg, r2->reg, r1->reg, 0);
 }
 
 
