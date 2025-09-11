@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <string_list.h>
 #include <errno.h>
 
+#include "assembler.h"
 #include "elf_format.h"
 
 extern int yyparse(void);

@@ -7,7 +7,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
-#include "../src/string_list.h"
+#include "assembler.h"
 #include "assembler.tab.h"
 %}
 
