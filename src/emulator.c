@@ -78,61 +78,6 @@ void term_printf(const char *fmt, ...) {
     }
 }
 
-uint8_t sys_mem_read8(System *sys, uint32_t addr) {
-    if (addr == TERM_IN_ADDR) {
-        if (atomic_load(&sys->term_has_char)) {
-            unsigned int c = atomic_load(&sys->term_char);
-            atomic_store(&sys->term_has_char, 0);
-            return (uint8_t)c;
-        } else {
-            return 0;
-        }
-    }
-    if (addr == TERM_OUT_ADDR) {
-        return 0;
-    }
-    if (addr == TIM_CFG_ADDR) {
-        return (uint8_t)(atomic_load(&sys->tim_cfg) & 0xFFu);
-    }
-
-    pthread_mutex_lock(&sys->mem_lock);
-    uint8_t *page = get_page(sys->mem, addr, 0);
-    uint8_t v = 0;
-    if (page) {
-        v = page[addr & (PAGE_SIZE - 1)];
-    }
-    pthread_mutex_unlock(&sys->mem_lock);
-    return v;
-}
-
-void sys_mem_write8(System *sys, uint32_t addr, uint8_t val) {
-    if (addr == TERM_OUT_ADDR) {
-		term_printf("%c", (char)val);
-        return;
-    }
-    if (addr == TERM_IN_ADDR) {
-        atomic_store(&sys->term_char, (unsigned int)val);
-        atomic_store(&sys->term_has_char, 1);
-        atomic_store(&sys->pending_cause, 3);
-        atomic_store(&sys->pending_interrupt, 1);
-        return;
-    }
-    if (addr == TIM_CFG_ADDR) {
-        atomic_store(&sys->tim_cfg, (unsigned int)(val & 0x7u));
-        return;
-    }
-
-    pthread_mutex_lock(&sys->mem_lock);
-    uint8_t *page = get_page(sys->mem, addr, 1);
-    if (!page) {
-        fprintf(stderr, "Out of memory allocating page for addr 0x%08x\n", addr);
-        pthread_mutex_unlock(&sys->mem_lock);
-        return;
-    }
-    page[addr & (PAGE_SIZE - 1)] = val;
-    pthread_mutex_unlock(&sys->mem_lock);
-}
-
 uint32_t sys_mem_read32(System *sys, uint32_t addr) {
     if (addr == TERM_IN_ADDR) {
         uint32_t val = 0;
@@ -161,12 +106,10 @@ uint32_t sys_mem_read32(System *sys, uint32_t addr) {
                 (page[offset + 2] << 8)  |
                 (page[offset + 3] << 0);
         } else {
-            v = (sys_mem_read8(sys, addr + 0) << 0)  |
-                (sys_mem_read8(sys, addr + 1) << 8)  |
-                (sys_mem_read8(sys, addr + 2) << 16) |
-                (sys_mem_read8(sys, addr + 3) << 24);
-            pthread_mutex_unlock(&sys->mem_lock);
-            return v;
+            v = ((uint32_t)page[offset % PAGE_SIZE] << 24) |
+                ((uint32_t)page[(offset + 1) % PAGE_SIZE] << 16) |
+                ((uint32_t)page[(offset + 2) % PAGE_SIZE] << 8)  |
+                ((uint32_t)page[(offset + 3) % PAGE_SIZE] << 0);
         }
     }
     pthread_mutex_unlock(&sys->mem_lock);
@@ -175,7 +118,13 @@ uint32_t sys_mem_read32(System *sys, uint32_t addr) {
 
 void sys_mem_write32(System *sys, uint32_t addr, uint32_t val) {
     if (addr == TERM_OUT_ADDR) {
-		term_printf("%c", (char)(val >> 24));
+		char ch = 0;
+		int i = 3;
+		while(ch == 0 && i >= 0) {
+			ch = val >> (i * 8);
+			i--;
+		}
+        term_printf("%c", ch);
         return;
     }
     if (addr == TERM_IN_ADDR) {
@@ -190,14 +139,28 @@ void sys_mem_write32(System *sys, uint32_t addr, uint32_t val) {
         return;
     }
 
-    uint8_t b3 = (uint8_t)(val & 0xFFu);
-    uint8_t b2 = (uint8_t)((val >> 8) & 0xFFu);
-    uint8_t b1 = (uint8_t)((val >> 16) & 0xFFu);
-    uint8_t b0 = (uint8_t)((val >> 24) & 0xFFu);
-    sys_mem_write8(sys, addr + 0, b0);
-    sys_mem_write8(sys, addr + 1, b1);
-    sys_mem_write8(sys, addr + 2, b2);
-    sys_mem_write8(sys, addr + 3, b3);
+    pthread_mutex_lock(&sys->mem_lock);
+    uint8_t *page = get_page(sys->mem, addr, 1);
+    if (!page) {
+        fprintf(stderr, "Out of memory allocating page for addr 0x%08x\n", addr);
+        pthread_mutex_unlock(&sys->mem_lock);
+        return;
+    }
+
+    uint32_t offset = addr & (PAGE_SIZE - 1);
+    if (offset <= PAGE_SIZE - 4) {
+        page[offset + 0] = (uint8_t)((val >> 24) & 0xFFu);
+        page[offset + 1] = (uint8_t)((val >> 16) & 0xFFu);
+        page[offset + 2] = (uint8_t)((val >> 8)  & 0xFFu);
+        page[offset + 3] = (uint8_t)( val        & 0xFFu);
+    } else {
+        page[offset % PAGE_SIZE]       = (uint8_t)((val >> 24) & 0xFFu);
+        page[(offset + 1) % PAGE_SIZE] = (uint8_t)((val >> 16) & 0xFFu);
+        page[(offset + 2) % PAGE_SIZE] = (uint8_t)((val >> 8)  & 0xFFu);
+        page[(offset + 3) % PAGE_SIZE] = (uint8_t)( val        & 0xFFu);
+    }
+
+    pthread_mutex_unlock(&sys->mem_lock);
 }
 
 void cpu_push(System *sys, uint32_t val) {
@@ -237,7 +200,16 @@ int load_hexfile(System *sys, const char *fname) {
             if (bend == p) break;
 
             if (addr <= 0xFFFFFFFFu) {
-                sys_mem_write8(sys, (uint32_t)addr, (uint8_t)(b & 0xFFu));
+                pthread_mutex_lock(&sys->mem_lock);
+                uint8_t *page = get_page(sys->mem, (uint32_t)addr, 1);
+                if (!page) {
+                    fprintf(stderr, "Out of memory allocating page for addr 0x%08lx\n", addr);
+                    pthread_mutex_unlock(&sys->mem_lock);
+                    fclose(f);
+                    return -1;
+                }
+                page[(uint32_t)addr & (PAGE_SIZE - 1)] = (uint8_t)(b & 0xFFu);
+                pthread_mutex_unlock(&sys->mem_lock);
             } else {
                 fprintf(stderr, "Warning: skipping byte at out-of-range address 0x%lx\n", addr);
             }
@@ -251,9 +223,11 @@ int load_hexfile(System *sys, const char *fname) {
     return 0;
 }
 
+#define IRQ_BIT(cause) (1u << (cause))
+
 void raise_interrupt(System *sys, uint32_t cause) {
     atomic_store(&sys->pending_cause, (int)cause);
-    atomic_store(&sys->pending_interrupt, 1);
+    atomic_fetch_or(&sys->pending_interrupt, IRQ_BIT(cause));
 }
 
 void usleep_ms(long usec) {
@@ -335,25 +309,31 @@ void *timer_thread(void *arg) {
 }
 
 void cpu_handle_interrupt(System *sys) {
-    int pending = atomic_load(&sys->pending_interrupt);
+    unsigned int pending = atomic_load(&sys->pending_interrupt);
     if (!pending) return;
-    uint32_t cause = (uint32_t)atomic_load(&sys->pending_cause);
 
     uint32_t status = *sys->cpu.status;
     int I  = (status & 0x1u) ? 1:0;
     int Tl = (status & 0x2u) ? 1:0;
     int Tr = (status & 0x4u) ? 1:0;
 
-    int allowed = 0;
-    if (cause == 2) {
-        if (!I && !Tr) allowed = 1;
-    } else if (cause == 3) {
-        if (!I && !Tl) allowed = 1;
-    } else {
-        if (!I) allowed = 1;
+    int chosen = -1;
+    if (pending & IRQ_BIT(2)) {
+        if (!I && !Tr) chosen = 2;
     }
+    if (chosen == -1 && (pending & IRQ_BIT(3))) {
+        if (!I && !Tl) chosen = 3;
+    }
+    if (chosen == -1) {
+        for (int c = 0; c < 32; ++c) {
+            if (pending & IRQ_BIT(c)) {
+                if (!I) { chosen = c; break; }
+            }
+        }
+    }
+    if (chosen == -1) return;
 
-    if (!allowed) return;
+    atomic_fetch_and(&sys->pending_interrupt, ~IRQ_BIT(chosen));
 
     uint32_t sp = sys->cpu.r[14];
     sp -= 4;
@@ -362,11 +342,9 @@ void cpu_handle_interrupt(System *sys) {
     sys_mem_write32(sys, sp, sys->cpu.r[15]);
     sys->cpu.r[14] = sp;
 
-    *sys->cpu.cause = cause;
+    *sys->cpu.cause = (uint32_t)chosen;
     *sys->cpu.status |= 0x1u;
     sys->cpu.r[15] = *sys->cpu.handler;
-
-    atomic_store(&sys->pending_interrupt, 0);
 }
 
 void cpu_init(System *sys) {
