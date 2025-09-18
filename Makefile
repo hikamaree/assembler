@@ -1,5 +1,5 @@
 CXX := gcc
-CXXFLAGS := -std=c11 -Wall -Wextra -Wno-unused-function -D_POSIX_C_SOURCE=200809L -I./src -lpthread
+CXXFLAGS := -std=c11 -Wall -Wextra -Wno-unused-function -D_POSIX_C_SOURCE=200809L -I./src
 BUILD_DIR := build
 SRC_DIR := src
 MICS_DIR := mics
@@ -72,7 +72,7 @@ $(LINKER_TARGET): $(LINKER_OBJS)
 # Link emulator executable
 $(EMULATOR_TARGET): $(EMULATOR_OBJ)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 clean:
 	rm -rf $(BUILD_DIR) $(ASSEMBLER_TARGET) $(LINKER_TARGET) $(EMULATOR_TARGET)
